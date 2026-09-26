@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "version": "2026.09.26-1",
+  "currency": "USD",
+  "unit": "per_million_tokens",
+  "note": "Snapshot of publicly listed prices, recorded on the date in each entry. Nothing here is verified by Inferconomy, so every entry ships with verified=false and no cost derived from this file is reported as exact. Override it with your own file for billing.",
+  "models": {
+    "gpt-4o": {
+      "input_per_million": 2.5,
+      "output_per_million": 10.0,
+      "cached_input_per_million": 1.25,
+      "source": "vendor published pricing",
+      "as_of": "2026-09-26",
+      "verified": false
+    },
+    "gpt-4o-mini": {
+      "input_per_million": 0.15,
+      "output_per_million": 0.6,
+      "cached_input_per_million": 0.075,
+      "source": "vendor published pricing",
+      "as_of": "2026-09-26",
+      "verified": false
+    },
+    "claude-3-5-sonnet": {
+      "input_per_million": 3.0,
+      "output_per_million": 15.0,
+      "source": "vendor published pricing",
+      "as_of": "2026-09-26",
+      "verified": false
+    },
+    "claude-3-5-haiku": {
+      "input_per_million": 0.8,
+      "output_per_million": 4.0,
+      "source": "vendor published pricing",
+      "as_of": "2026-09-26",
+      "verified": false
+    }
+  }
+}

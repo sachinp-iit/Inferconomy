@@ -55,13 +55,19 @@ Delivered as `Usage.tokens_exact` and `Usage.cost_exact` tracked separately, wit
 exact, and an optional `OptimizationReport.usage` field exposing
 `usage_basis` and `citable`.
 
-### US-005 · Versioned cost table `todo`
+### US-005 · Versioned cost table `done`
 
 As an operator, I want provider pricing kept in a separate, versioned data file
 that I can override, so that price changes do not require a code release.
 
 **Done when** costs load from a bundled JSON file, can be replaced by a user file,
 and are versioned independently of the package.
+
+Delivered as `inferconomy.costs` with a bundled `data/prices.json` that ships in
+the wheel, a table `version` and `schema_version` independent of the package, and
+`load_price_table(path)` for a full override. Every price carries `source`,
+`as_of`, and `verified`; no bundled price is verified, so no cost derived from
+the snapshot is ever reported as exact.
 
 ### US-006 · Fixed-budget baseline runner `todo`
 

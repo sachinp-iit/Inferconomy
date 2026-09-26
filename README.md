@@ -15,9 +15,9 @@ pip install inferconomy        # status: not yet released
 ```
 
 The package builds and installs today (`US-001` is done) but has no public
-release. What exists so far is the data contracts, the client boundary, and
-deterministic test doubles — see the [progress log](#progress-log) for exactly
-where it stands.
+release. What exists so far is the data contracts, the client boundary, token and
+price accounting, and deterministic test doubles — see the
+[progress log](#progress-log) for exactly where it stands.
 
 Work proceeds one user story at a time, tracked in [BACKLOG.md](BACKLOG.md) and
 recorded in the [progress log](#progress-log).
@@ -157,6 +157,7 @@ number we report.
 | `inferconomy.providers` | Provider clients and usage extraction |
 | `inferconomy.telemetry` | Token, cost, and latency accounting |
 | `inferconomy.tokens` | Pluggable `TokenEstimator` for providers that do not report usage |
+| `inferconomy.costs` | Versioned price table, loadable from bundled JSON or an operator's file |
 
 ### Design principles
 
@@ -469,6 +470,40 @@ figure it produces is labelled as an estimate. 150 tests, 100% coverage.
   possible way to be wrong.
 - **The fake client now delegates to the shipped estimator.** It used to carry a
   private copy, which is a divergence waiting to happen.
+
+### 2026-09-26 — US-005, versioned cost table
+
+`inferconomy.costs` loads provider pricing from JSON that versions itself, ships
+inside the wheel, and can be replaced by a file you supply. 215 tests, 100%
+coverage.
+
+- **Prices live in data, not code.** A vendor changing a price should not require
+  a release from us. The file carries its own `version` and `schema_version`,
+  independent of the package version, so a correction can ship without touching
+  code.
+- **Every price carries its provenance** — `source`, `as_of`, and `verified` — and
+  a test asserts each one is present. A number nobody can trace is not a data
+  point, it is folklore.
+- **The bundled snapshot claims no verification.** Inferconomy cannot read your
+  invoice, so every bundled price ships with `verified: false` and
+  `price_usage` will not report a cost as exact on the strength of it. Real token
+  counts priced at an unverified rate are reported as `priced_unverified` — a
+  number is produced, and it is never citable. Supply a table you have checked
+  and the same tokens become citable.
+- **A user file replaces the bundled table entirely; the two are never merged.**
+  Merging would silently resurrect bundled prices for models an operator meant
+  to exclude, which is how a cost model acquires prices nobody chose.
+- **An unknown model raises.** Returning zero would turn "we do not know what
+  this costs" into "this is free", which is the most expensive kind of wrong. The
+  error names the table, its version, and what it does know.
+- **Cache reads and reasoning tokens are re-priced, not added.** Both are subsets
+  of their parent count, so a million cached input tokens is a million input
+  tokens, not two million.
+- **Money is rounded to twelve places.** Unrounded per-million division
+  accumulates float error in the low digits, and two runs that should agree stop
+  agreeing.
+- **Pricing never compounds a previous estimate.** A record that already carries a
+  cost is priced from its token counts alone.
 
 ---
 

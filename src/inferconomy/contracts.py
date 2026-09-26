@@ -90,23 +90,31 @@ class StopReason(str, Enum):
 class UsageBasis(str, Enum):
     """How much of a usage record is measurement rather than inference.
 
-    The answer an operator needs before quoting a savings figure. These are
-    ordered from most to least trustworthy, and the distinction between
-    :attr:`REPORTED` and :attr:`REPORTED_UNPRICED` matters: the token counts in
-    the second case are real, and only the conversion to money is missing.
+    The answer an operator needs before quoting a savings figure, ordered from
+    most to least trustworthy. Only :attr:`REPORTED` is citable, and it is the
+    only one that claims a cost figure is a fact about money rather than an
+    arithmetic result.
     """
 
     REPORTED = "reported"
     """Provider reported usage and published rates were applied. Fully citable."""
 
     REPORTED_UNPRICED = "reported_unpriced"
-    """Token counts are real, but no reliable price was available for this model."""
+    """Real token counts, but no price at all. The count stands; the cost does not."""
+
+    PRICED_UNVERIFIED = "priced_unverified"
+    """Real token counts priced at a rate nobody has checked against an invoice.
+
+    Distinct from :attr:`REPORTED_UNPRICED` because a number was produced. It is
+    shown for usefulness and is never citable.
+    """
 
     PRICED_FROM_ESTIMATE = "priced_from_estimate"
     """Tokens were estimated, then priced. The money figure inherits the error."""
 
     ESTIMATED = "estimated"
-    """Token counts are estimated and no cost is available."""
+    """Token counts are estimated. Any cost attached came from an unverified rate
+    and inherits that doubt, so ``cost_exact`` is false."""
 
     ABSENT = "absent"
     """No accounting at all. A number derived from this record would be fiction."""
@@ -233,10 +241,10 @@ class Usage:
 
     Provenance is tracked separately for tokens and for cost, because the two
     fail independently. A provider can report exact token counts while the price
-    of its cheapest tier is unknown, which gives exact tokens and no cost at all.
-    One combined flag would force that case to be described as wholly estimated
-    and would discard the part that *is* a measurement. Only a provider-reported
-    figure may set :attr:`tokens_exact`; an estimator never can.
+    of its cheapest tier is unknown, which gives exact tokens and no cost at all;
+    and a verified price applied to estimated tokens gives a real rate and an
+    unreliable answer. One combined flag would have to flatten both cases. Only a
+    provider-reported figure may set :attr:`tokens_exact`; an estimator never can.
     """
 
     input_tokens: int = 0
@@ -255,7 +263,12 @@ class Usage:
 
     cost_usd: float | None = None
     cost_exact: bool = False
-    """Whether ``cost_usd`` reflects published rates rather than an estimate."""
+    """Whether the rate behind ``cost_usd`` was verified rather than assumed.
+
+    Says nothing about the token counts. A published rate applied to estimated
+    tokens leaves this true and the resulting number still uncitable, which is
+    why :attr:`exact` and :attr:`basis` exist alongside it.
+    """
 
     def __post_init__(self) -> None:
         for name in (
@@ -302,7 +315,9 @@ class Usage:
         if self.tokens_exact and self.cost_exact:
             return UsageBasis.REPORTED
         if self.tokens_exact:
-            return UsageBasis.REPORTED_UNPRICED
+            if self.cost_usd is None:
+                return UsageBasis.REPORTED_UNPRICED
+            return UsageBasis.PRICED_UNVERIFIED
         if self.cost_exact:
             return UsageBasis.PRICED_FROM_ESTIMATE
         if self.input_tokens or self.output_tokens:

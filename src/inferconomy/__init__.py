@@ -21,17 +21,31 @@ from inferconomy.contracts import (
     Usage,
     UsageBasis,
 )
+from inferconomy.costs import (
+    CostTableError,
+    InvalidPriceTable,
+    ModelPrice,
+    PriceTable,
+    UnknownModel,
+    load_price_table,
+)
 
 __version__ = "0.1.0.dev0"
 
 __all__ = [
     "Capability",
+    "CostTableError",
+    "InvalidPriceTable",
     "Message",
+    "ModelPrice",
     "OptimizationReport",
+    "PriceTable",
     "Request",
     "Response",
     "StopReason",
+    "UnknownModel",
     "Usage",
     "UsageBasis",
     "__version__",
+    "load_price_table",
 ]
