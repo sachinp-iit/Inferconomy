@@ -10,12 +10,16 @@ every run and every machine. No sleeps, no randomness, no clock reads.
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 
 from inferconomy.client import CompletionOptions
 from inferconomy.contracts import Capability, Request, Response, Usage
+from inferconomy.tokens import (
+    DEFAULT_CHARS_PER_TOKEN,
+    HeuristicTokenEstimator,
+    estimate_usage,
+)
 
 __all__ = [
     "FakeClient",
@@ -26,20 +30,18 @@ __all__ = [
     "user_request",
 ]
 
-_CHARS_PER_TOKEN = 4
-"""Crude token heuristic.
-
-Deliberately not a real tokenizer. Depending on one would mean a runtime
-dependency for a test double, and every figure derived from it is reported as
-``cost_exact=False`` so no caller can mistake it for a measurement.
-"""
+_ESTIMATOR = HeuristicTokenEstimator()
+"""Shared so the fake and the shipped estimator can never drift apart."""
 
 
 def estimate_tokens(text: str) -> int:
-    """Estimate token count without a tokenizer."""
-    if not text:
-        return 0
-    return math.ceil(len(text) / _CHARS_PER_TOKEN)
+    """Estimate token count without a tokenizer.
+
+    A thin alias for the shipped estimator. It is not a tokenizer, and the usage
+    records built from it carry ``tokens_exact=False``, so nothing derived from
+    it can be mistaken for a provider-reported figure.
+    """
+    return _ESTIMATOR.count(text)
 
 
 def echo_response(
@@ -57,15 +59,11 @@ def echo_response(
     )
     text = f"echo: {last_user.content}"
     if options.max_output_tokens is not None:
-        text = text[: options.max_output_tokens * _CHARS_PER_TOKEN]
+        text = text[: options.max_output_tokens * DEFAULT_CHARS_PER_TOKEN]
 
     return Response(
         text=text,
-        usage=Usage(
-            input_tokens=sum(estimate_tokens(m.content) for m in request.messages),
-            output_tokens=estimate_tokens(text),
-            llm_calls=1,
-        ),
+        usage=estimate_usage(request, text),
         model=options.model or model,
         provider_finish_reason="stop",
     )
@@ -180,7 +178,11 @@ def scripted(
         [
             Response(
                 text=text,
-                usage=Usage(output_tokens=estimate_tokens(text), llm_calls=1),
+                usage=Usage(
+                    output_tokens=estimate_tokens(text),
+                    llm_calls=1,
+                    tokens_exact=False,
+                ),
             )
             for text in texts
         ],

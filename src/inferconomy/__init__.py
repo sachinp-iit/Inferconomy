@@ -19,6 +19,7 @@ from inferconomy.contracts import (
     Response,
     StopReason,
     Usage,
+    UsageBasis,
 )
 
 __version__ = "0.1.0.dev0"
@@ -31,5 +32,6 @@ __all__ = [
     "Response",
     "StopReason",
     "Usage",
+    "UsageBasis",
     "__version__",
 ]

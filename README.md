@@ -15,8 +15,9 @@ pip install inferconomy        # status: not yet released
 ```
 
 The package builds and installs today (`US-001` is done) but has no public
-release and no functionality beyond its version. See the
-[progress log](#progress-log) for exactly where it stands.
+release. What exists so far is the data contracts, the client boundary, and
+deterministic test doubles — see the [progress log](#progress-log) for exactly
+where it stands.
 
 Work proceeds one user story at a time, tracked in [BACKLOG.md](BACKLOG.md) and
 recorded in the [progress log](#progress-log).
@@ -155,6 +156,7 @@ number we report.
 | `inferconomy.runtime` | The generate/inspect/continue/stop loop |
 | `inferconomy.providers` | Provider clients and usage extraction |
 | `inferconomy.telemetry` | Token, cost, and latency accounting |
+| `inferconomy.tokens` | Pluggable `TokenEstimator` for providers that do not report usage |
 
 ### Design principles
 
@@ -441,6 +443,32 @@ which provider or SDK is underneath. 111 tests, 100% coverage.
   fails any attempt to reach a non-loopback host, with tests asserting that the
   guard both blocks external hosts and permits loopback — a guard nobody
   verifies is not a guard.
+
+### 2026-09-26 — US-004, token accounting with explicit provenance
+
+`inferconomy.tokens` estimates what a provider declined to report, and every
+figure it produces is labelled as an estimate. 150 tests, 100% coverage.
+
+- **Token and cost provenance are separate flags** — `Usage.tokens_exact` and
+  `Usage.cost_exact`. They fail independently: a provider can report exact token
+  counts while the price of its cheapest tier is unknown, which is real data that
+  one combined flag would force us to describe as wholly estimated.
+- **Both default to `False`.** A library should under-claim precision rather than
+  let a caller read an estimate as a measurement. A missing number is honest; a
+  wrong one is not.
+- **An estimator can never confer exactness.** `estimate_usage` hard-codes
+  `tokens_exact=False`, so no future tokenizer or adapter can quietly upgrade an
+  estimate into a measurement. `TokenEstimator` is a protocol precisely so that
+  a real tokenizer can improve accuracy without touching that guarantee.
+- **`Usage.exact` and `Usage.basis` are derived, never stored.** A record cannot
+  claim a provenance its numbers do not support, and `OptimizationReport`
+  exposes `usage_basis` and `citable` from the same source.
+- **Aggregation degrades exactness.** `Usage.__add__` conjoins the flags: a sum
+  containing one estimated component is an estimate. Escalation means several
+  calls, and a total that hid one estimated call would be the most flattering
+  possible way to be wrong.
+- **The fake client now delegates to the shipped estimator.** It used to carry a
+  private copy, which is a divergence waiting to happen.
 
 ---
 

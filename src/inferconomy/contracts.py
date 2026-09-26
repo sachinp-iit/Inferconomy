@@ -87,6 +87,31 @@ class StopReason(str, Enum):
     """Inference stopped because of an error."""
 
 
+class UsageBasis(str, Enum):
+    """How much of a usage record is measurement rather than inference.
+
+    The answer an operator needs before quoting a savings figure. These are
+    ordered from most to least trustworthy, and the distinction between
+    :attr:`REPORTED` and :attr:`REPORTED_UNPRICED` matters: the token counts in
+    the second case are real, and only the conversion to money is missing.
+    """
+
+    REPORTED = "reported"
+    """Provider reported usage and published rates were applied. Fully citable."""
+
+    REPORTED_UNPRICED = "reported_unpriced"
+    """Token counts are real, but no reliable price was available for this model."""
+
+    PRICED_FROM_ESTIMATE = "priced_from_estimate"
+    """Tokens were estimated, then priced. The money figure inherits the error."""
+
+    ESTIMATED = "estimated"
+    """Token counts are estimated and no cost is available."""
+
+    ABSENT = "absent"
+    """No accounting at all. A number derived from this record would be fiction."""
+
+
 _EnumT = TypeVar("_EnumT", bound=Enum)
 
 
@@ -205,6 +230,13 @@ class Usage:
     or from an estimate. It defaults to ``False`` deliberately: a library should
     under-claim precision rather than let a caller read an estimate as a
     measurement.
+
+    Provenance is tracked separately for tokens and for cost, because the two
+    fail independently. A provider can report exact token counts while the price
+    of its cheapest tier is unknown, which gives exact tokens and no cost at all.
+    One combined flag would force that case to be described as wholly estimated
+    and would discard the part that *is* a measurement. Only a provider-reported
+    figure may set :attr:`tokens_exact`; an estimator never can.
     """
 
     input_tokens: int = 0
@@ -217,6 +249,9 @@ class Usage:
 
     llm_calls: int = 0
     """Number of LLM calls made. Not the number of user requests."""
+
+    tokens_exact: bool = False
+    """Whether these counts came from the provider rather than from estimation."""
 
     cost_usd: float | None = None
     cost_exact: bool = False
@@ -252,12 +287,34 @@ class Usage:
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
 
+    @property
+    def exact(self) -> bool:
+        """True only when both tokens and cost are known rather than estimated.
+
+        Convenient for "is this number citable?" checks. The two individual
+        flags stay authoritative; this is a summary, not a replacement.
+        """
+        return self.tokens_exact and self.cost_exact
+
+    @property
+    def basis(self) -> UsageBasis:
+        """How much of this record is measurement rather than inference."""
+        if self.tokens_exact and self.cost_exact:
+            return UsageBasis.REPORTED
+        if self.tokens_exact:
+            return UsageBasis.REPORTED_UNPRICED
+        if self.cost_exact:
+            return UsageBasis.PRICED_FROM_ESTIMATE
+        if self.input_tokens or self.output_tokens:
+            return UsageBasis.ESTIMATED
+        return UsageBasis.ABSENT
+
     def __add__(self, other: Usage) -> Usage:
         """Aggregate two usage records.
 
         Exactness is conjunctive: a sum containing even one estimated component
         is itself an estimate, and saying otherwise would be the kind of quiet
-        error this class exists to prevent.
+        error this class exists to prevent. Cost is unknown if either side's is.
         """
         return Usage(
             input_tokens=self.input_tokens + other.input_tokens,
@@ -265,6 +322,7 @@ class Usage:
             reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
             cached_input_tokens=self.cached_input_tokens + other.cached_input_tokens,
             llm_calls=self.llm_calls + other.llm_calls,
+            tokens_exact=self.tokens_exact and other.tokens_exact,
             cost_usd=(
                 None
                 if self.cost_usd is None or other.cost_usd is None
@@ -281,8 +339,10 @@ class Usage:
             "cached_input_tokens": self.cached_input_tokens,
             "llm_calls": self.llm_calls,
             "total_tokens": self.total_tokens,
+            "tokens_exact": self.tokens_exact,
             "cost_usd": self.cost_usd,
             "cost_exact": self.cost_exact,
+            "usage_basis": self.basis.value,
         }
 
     @classmethod
@@ -293,6 +353,7 @@ class Usage:
             reasoning_tokens=int(data.get("reasoning_tokens", 0)),
             cached_input_tokens=int(data.get("cached_input_tokens", 0)),
             llm_calls=int(data.get("llm_calls", 0)),
+            tokens_exact=bool(data.get("tokens_exact", False)),
             cost_usd=None if data.get("cost_usd") is None else float(data["cost_usd"]),
             cost_exact=bool(data.get("cost_exact", False)),
         )
@@ -374,6 +435,14 @@ class OptimizationReport:
     capabilities_used: tuple[Capability, ...] = ()
     """Which model levers the policy actually exercised."""
 
+    usage: Usage | None = None
+    """Accounting for the whole request, mirroring the result's usage.
+
+    Held here so that a stored report is a self-contained audit artifact.
+    Answering "can I cite these numbers?" should not require reassembling three
+    separate objects.
+    """
+
     initial_budget: int = 0
     additional_budget: int = 0
     """Computation allocated on top of the initial budget after escalation."""
@@ -405,11 +474,29 @@ class OptimizationReport:
     def escalated(self) -> bool:
         return self.additional_budget > 0
 
+    @property
+    def usage_basis(self) -> UsageBasis:
+        """Provenance of the numbers in this report."""
+        return UsageBasis.ABSENT if self.usage is None else self.usage.basis
+
+    @property
+    def citable(self) -> bool:
+        """True only when every figure here is a measurement, not an estimate.
+
+        The single check a published savings claim should be gated on. It is
+        false by default and can only be earned by a provider that reports usage
+        combined with a known price.
+        """
+        return self.usage_basis is UsageBasis.REPORTED
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
             "strategy": self.strategy,
             "capabilities_used": [item.value for item in self.capabilities_used],
+            "usage": None if self.usage is None else self.usage.to_dict(),
+            "usage_basis": self.usage_basis.value,
+            "citable": self.citable,
             "initial_budget": self.initial_budget,
             "additional_budget": self.additional_budget,
             "total_budget": self.total_budget,
@@ -433,12 +520,14 @@ class OptimizationReport:
         raw_decisions = data.get("decisions") or ()
         if not isinstance(raw_decisions, Sequence) or isinstance(raw_decisions, str):
             raise ValueError("Report 'decisions' must be a sequence of strings.")
+        raw_usage = data.get("usage")
         return cls(
             strategy=strategy,
             capabilities_used=tuple(
                 _decode_enum(Capability, item, "capability")
                 for item in (data.get("capabilities_used") or ())
             ),
+            usage=(None if raw_usage is None else Usage.from_dict(raw_usage)),
             initial_budget=int(data.get("initial_budget", 0)),
             additional_budget=int(data.get("additional_budget", 0)),
             stopped_on=_decode_enum(

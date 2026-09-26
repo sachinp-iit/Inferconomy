@@ -41,13 +41,19 @@ that the library never depends on a specific provider SDK.
 **Done when** a `Client` protocol exists, a deterministic fake client is
 included, and every test in the suite runs with no network access.
 
-### US-004 · Token accounting, exact versus estimated `todo`
+### US-004 · Token accounting, exact versus estimated `done`
 
 As an operator, I want to know whether reported token counts are exact or
 estimated, so that I never act on a cost number of unknown provenance.
 
 **Done when** usage carries an explicit `exact: bool`, the estimate path is
 covered by tests, and estimated results are flagged in the report.
+
+Delivered as `Usage.tokens_exact` and `Usage.cost_exact` tracked separately, with
+`Usage.exact` and `Usage.basis` as derived summaries, a pluggable
+`TokenEstimator` in `inferconomy.tokens` whose estimates can never be marked
+exact, and an optional `OptimizationReport.usage` field exposing
+`usage_basis` and `citable`.
 
 ### US-005 · Versioned cost table `todo`
 
