@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local-only strategy documents — never commit
+INTERNAL_PLAN.md
+INTERNAL_PRIORART.md
+*.local.md

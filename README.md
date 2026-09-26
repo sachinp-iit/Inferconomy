@@ -1,740 +1,373 @@
 # Inferconomy
 
-> **Optimize Inference. Maximize Token Economy.**
+> **Optimize inference. Maximize token economy.**
 
-Inferconomy is an adaptive LLM inference optimization library that dynamically determines **how an LLM should infer** and **how much computation it should spend** on each request.
+Inferconomy is an LLM inference optimization library. It decides **how** a model
+should infer and **how much** computation each request deserves, instead of
+applying one fixed strategy and one fixed budget to every request.
 
-The goal is simple:
+It is a **library**, not a framework. It sits underneath whatever you already
+use — an agent, a router, an IDE, a coding assistant, a plain HTTP service — and
+wraps the LLM client you already have.
 
-> **Spend inference computation where it matters, and avoid unnecessary token cost without compromising task quality.**
+```
+pip install inferconomy        # status: not yet released
+```
 
-Inferconomy is designed as a **library**, not an agent framework or orchestration platform. It can be integrated underneath existing routers, agent frameworks, coding assistants, IDEs, and custom LLM applications.
+Work proceeds one user story at a time, tracked in [BACKLOG.md](BACKLOG.md) and
+recorded in the [progress log](#progress-log).
 
 ---
 
-## Why Inferconomy?
+## Status
 
-LLM applications commonly use fixed inference behavior:
+🚧 **Pre-alpha.** No release yet. No code is published at this time — the
+architecture below is the design we are building to, and the [roadmap](#roadmap)
+and [progress log](#progress-log) track what actually exists.
+
+We are publishing progress rather than staying quiet, so that the design can be
+reviewed before it hardens. Nothing below the roadmap is implemented.
+
+---
+
+## Why
+
+LLM applications run on fixed inference behaviour:
 
 - fixed reasoning depth
 - fixed output budgets
-- fixed generation limits
 - fixed prompting strategies
 - fixed verification patterns
 
-But not every request requires the same amount of computation.
+But the computation a request needs varies by orders of magnitude. A factual
+lookup and a hard debugging session do not deserve the same budget. Allocating a
+uniform maximum is wasteful; allocating a uniform minimum is wrong.
 
-A simple question may need very little inference. A difficult debugging or reasoning task may require substantially more.
+Inferconomy makes that allocation automatic, and — critically — it starts small
+and escalates rather than truncating:
 
-Inferconomy aims to make this decision **automatically**.
-
-Instead of:
-
-```text
-Every request
-      ↓
-Same inference strategy
-      ↓
-Same computation budget
 ```
-
-Inferconomy aims for:
-
-```text
-                         Request
-                            ↓
-                  Analyze task requirements
-                            ↓
-                 Choose inference strategy
-                            ↓
-                  Allocate initial budget
-                            ↓
-                       LLM inference
-                            ↓
-                    Is it sufficient?
-                     ↙            ↘
-                   Yes             No
-                    ↓               ↓
-                 Return       Adapt / escalate
-                                    ↓
+ Every request              Request
+      ↓                         ↓
+ Same strategy            Analyze task
+      ↓                         ↓
+ Same budget              Choose strategy
+      ↓                         ↓
+                    Allocate initial budget
+                              ↓
+                        LLM inference
+                              ↓
+                        Is it sufficient?
+                         ↙          ↘
+                       Yes           No
+                        ↓             ↓
+                     Return     Escalate / switch strategy
+                                     ↓
                               Continue inference
 ```
 
 ---
 
-## Core Idea
+## Core idea
 
-Inferconomy treats inference as an **adaptive resource-allocation problem**.
+Inference is an adaptive resource-allocation problem. For a task `q`, find the
+inference procedure `I` that is cheap but sufficient:
 
-For a given task `q`, the system seeks an inference process `I` that minimizes computation cost while satisfying a required quality level:
-
-```text
+```
 minimize    Cost(I, q)
 
 subject to  Quality(I, q) >= target
 ```
 
-The optimization target is not simply:
+The objective is **not** "generate fewer tokens." It is **minimum sufficient
+computation**. That computation spans strategy, reasoning depth, reasoning
+budget, output budget, verification, refinement, escalation, and early
+termination.
 
-> "Generate fewer tokens."
-
-It is:
-
-> **Find the minimum sufficient inference computation for the task.**
-
-That computation can include:
-
-- inference strategy
-- reasoning depth
-- reasoning budget
-- output budget
-- verification
-- refinement
-- adaptive escalation
-- early termination
+A budget cut that degrades task quality is not a successful optimization. Token
+savings are only meaningful *while task success is preserved*, and that is the
+number we report.
 
 ---
 
-## What Inferconomy Is
+## How it works
 
-Inferconomy is a **low-level inference optimization library**.
-
-It focuses on:
-
-- **Dynamic inference strategies**
-- **Adaptive reasoning budgets**
-- **Adaptive output budgets**
-- **Inference-time optimization**
-- **Dynamic escalation**
-- **Early termination**
-- **Inference sufficiency**
-- **Quality/cost optimization**
-- **Outcome-based calibration**
-
-### What Inferconomy is NOT
-
-Inferconomy does not aim to become another:
-
-- agent framework
-- RAG framework
-- tool orchestration framework
-- memory framework
-- workflow engine
-- model router
-
-Those systems can use Inferconomy as an inference optimization layer.
-
----
-
-## Architecture
-
-```text
-┌─────────────────────────────────────────────────────┐
-│                  Host Application                   │
-│                                                     │
-│ Cursor / ChatGPT / Claude / Agent / Router / App    │
-└──────────────────────────┬──────────────────────────┘
-                           │
+```
+┌──────────────────────────────────────────────────────────┐
+│                    Host application                       │
+│      agent · router · IDE · assistant · custom service   │
+└───────────────────────────┬──────────────────────────────┘
+                            │  Request  +  LLM client
+                            ▼
+┌──────────────────────────────────────────────────────────┐
+│                      Inferconomy                          │
+│                                                          │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │  Capability probe — what can this model actually    │  │
+│  │  expose? reasoning tokens · effort control ·       │  │
+│  │  logprobs · separable chain-of-thought              │  │
+│  └───────────────────────┬────────────────────────────┘  │
+│                          ▼                               │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │  Decision engine (pluggable)                        │  │
+│  │  is reasoning needed · task shape · uncertainty    │  │
+│  └───────────────────────┬────────────────────────────┘  │
+│                          ▼                               │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │  Strategy planner                                   │  │
+│  │  direct · reason · decompose · reason+verify · …    │  │
+│  └───────────────────────┬────────────────────────────┘  │
+│                          ▼                               │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │  Policy + budget controller (pluggable)             │  │
+│  │  initial budget · escalation · early termination    │  │
+│  └───────────────────────┬────────────────────────────┘  │
+│                          ▼                               │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │  Runtime loop — generate · inspect · continue ·     │  │
+│  │  stop · adapt                                        │  │
+│  └───────────────────────┬────────────────────────────┘  │
+│                          ▼                               │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │  Telemetry — tokens · cost · latency · decisions    │  │
+│  └────────────────────────────────────────────────────┘  │
+└──────────────────────────┬───────────────────────────────┘
                            ▼
-┌─────────────────────────────────────────────────────┐
-│                     Inferconomy                      │
-│                                                     │
-│  ┌───────────────────────────────────────────────┐  │
-│  │        Task / Inference Analysis              │  │
-│  │                                               │  │
-│  │  complexity · reasoning need · depth ·        │  │
-│  │  response requirements · uncertainty          │  │
-│  └───────────────────────┬───────────────────────┘  │
-│                          ▼                          │
-│  ┌───────────────────────────────────────────────┐  │
-│  │          Inference Strategy Planner            │  │
-│  │                                               │  │
-│  │ direct · reasoning · decomposition · verify   │  │
-│  │ refine · other adaptive strategies             │  │
-│  └───────────────────────┬───────────────────────┘  │
-│                          ▼                          │
-│  ┌───────────────────────────────────────────────┐  │
-│  │             Budget Controller                 │  │
-│  │                                               │  │
-│  │ reasoning budget · output budget · escalation │  │
-│  └───────────────────────┬───────────────────────┘  │
-│                          ▼                          │
-│  ┌───────────────────────────────────────────────┐  │
-│  │              Runtime Controller               │  │
-│  │                                               │  │
-│  │ execute · inspect · continue · stop · adapt   │  │
-│  └───────────────────────┬───────────────────────┘  │
-│                          ▼                          │
-│                     Existing LLM                    │
-│                          │                          │
-│                          ▼                          │
-│               Quality / Cost / Usage                │
-│                     Telemetry                       │
-└─────────────────────────────────────────────────────┘
+                    Any LLM provider
 ```
+
+### Module map
+
+| Module | Responsibility |
+|---|---|
+| `inferconomy.api` | `optimize()` — the single public entry point |
+| `inferconomy.types` | `Request`, `Response`, `Usage`, `OptimizationReport` |
+| `inferconomy.capabilities` | Probes what the target model supports |
+| `inferconomy.decision` | `DecisionEngine` protocol + adapters |
+| `inferconomy.strategy` | Strategy catalogue and selection |
+| `inferconomy.policy` | `Policy` protocol — budget allocation, escalation, stopping |
+| `inferconomy.runtime` | The generate/inspect/continue/stop loop |
+| `inferconomy.providers` | Provider clients and usage extraction |
+| `inferconomy.telemetry` | Token, cost, and latency accounting |
+
+### Design principles
+
+1. **Quality before savings.** Never trade meaningful task quality for tokens.
+2. **Minimum sufficient computation.** Not every task deserves the same budget.
+3. **Escalate, never truncate.** A budget is a starting point, not a cap.
+4. **Model-agnostic interface, not uniform efficiency.** See below.
+5. **Framework-agnostic.** We wrap a client; we do not own your architecture.
+6. **Every decision is measurable.** Quality, tokens, latency, cost — or it did
+   not happen.
+7. **Policy is pluggable.** Allocation is a swappable component, not a hardcoded
+   heuristic.
 
 ---
 
-## Decision Layer
+## Model support and capability probing
 
-Inferconomy can use a lightweight decision engine to characterize a request.
+We are model-agnostic in the sense that matters: **one interface, any provider.**
 
-For example, **Jev or a similar structured decision model** can answer questions such as:
+We are *not* claiming uniform efficiency across models, because that would be
+false. Adaptive control needs levers, and models expose different ones:
 
-- Is substantial reasoning required?
-- Is the task straightforward?
-- Does the task benefit from decomposition?
-- Is verification warranted?
-- How deep should the reasoning initially be?
-- How much uncertainty is present?
+| Capability | What it enables | Fallback if absent |
+|---|---|---|
+| Separate reasoning-token budget | Reasoning/output budget split | Single output budget |
+| Reasoning-effort control | Direct mode switching | Prompt-level instruction |
+| Chain-of-thought visible to caller | Checkpointed sufficiency checks | End-of-response check only |
+| Logprobs / confidence | Probabilistic early exit | Deterministic heuristics |
+| Token usage in response | Exact cost accounting | Estimated accounting, flagged as such |
 
-The decision engine is **not the core innovation**.
+Inferconomy probes for these at runtime, uses what is available, and **degrades
+to a documented baseline otherwise**. Results that depend on an estimated rather
+than exact cost are marked as such in the report. A model with no reasoning
+control and no inspectable trace offers a policy very little to work with, and we
+would rather say so in the report than imply a saving we did not achieve.
 
-Its purpose is to provide structured signals to the Inferconomy inference controller.
-
-Conceptually:
-
-```text
-Decision Engine
-      ↓
-Task Requirements
-      ↓
-Inference Planner
-      ↓
-Budget Controller
-```
-
-This architecture also allows other decision engines to be used.
-
----
-
-## Adaptive Inference
-
-Inferconomy should not assume that one inference strategy is optimal for every task.
-
-Possible strategies can include:
-
-```text
-Direct
-Reason
-Decompose → Solve
-Reason → Verify
-Reason → Refine
-Reason → Verify → Refine
-Adaptive continuation
-```
-
-The library can evolve beyond a fixed strategy catalogue toward dynamically composed inference procedures.
-
-The long-term research direction is:
-
-> **Automatically determine the most economical inference procedure for a task rather than forcing developers to configure the procedure manually.**
-
----
-
-## Adaptive Token Budgeting
-
-A fixed token budget is often inefficient.
-
-For example:
-
-```text
-Fixed strategy:
-
-Every request → 1,500 tokens
-```
-
-Inferconomy aims for:
-
-```text
-Easy request      → 150 tokens
-Moderate request  → 400 tokens
-Complex request   → 900 tokens
-Very complex      → adaptive escalation
-```
-
-The important difference is that Inferconomy does **not** blindly truncate generation.
-
-If the initial computation is insufficient, it can allocate additional computation.
-
-```text
-Initial budget
-      ↓
-   Inference
-      ↓
- Sufficient?
-   ↙      ↘
- Yes       No
-  ↓         ↓
-Return   Additional computation
-             ↓
-          Re-evaluate
-             ↓
-          Continue / stop
-```
-
----
-
-## Minimum-Sufficient Inference
-
-The central principle of Inferconomy is:
-
-> **Do not spend a fixed amount of computation. Spend the minimum amount that is sufficient for the task.**
-
-This creates a quality-constrained optimization problem.
-
-```text
-              Quality
-                 ▲
-                 │        ┌──────────────
-                 │        │ Target quality
-                 │    ┌───┘
-                 │ ┌──┘
-                 │─┘
-                 └────────────────────────►
-                         Computation
-```
-
-The system should operate near the point where additional computation provides diminishing value.
-
----
-
-## Quality First
-
-Token savings alone are not the objective.
-
-Inferconomy should optimize the combined relationship between:
-
-```text
-Quality
-   ×
-Inference efficiency
-   ×
-Token cost
-   ×
-Latency
-```
-
-A budget reduction that causes meaningful quality degradation is not considered a successful optimization.
-
-The desired outcome is:
-
-```text
-             Same or better task quality
-                         │
-                         │
-                         ▼
-              Less unnecessary compute
-                         │
-                         ▼
-                  Lower token cost
-```
-
----
-
-## Adaptive Escalation
-
-Inferconomy can start conservatively.
-
-Example:
-
-```text
-Request
-  ↓
-Initial inference: 250 tokens
-  ↓
-Insufficient?
-  ├── No → return
-  │
-  └── Yes
-       ↓
-   identify missing computation
-       ↓
-   allocate additional budget
-       ↓
-   continue / revise / verify
-       ↓
-   return
-```
-
-This is preferable to always allocating a large maximum budget.
-
-A future implementation may support **fine-grained continuation**, where additional computation is allocated based on the current inference state rather than restarting from scratch.
-
----
-
-## No Developer Configuration
-
-Inferconomy is intended to minimize the configuration burden on developers.
-
-The developer should not need to manually specify:
-
-```text
-reasoning = deep
-budget = 800
-strategy = verification
-escalation = 2
-```
-
-Instead:
-
-```python
-result = inferconomy.optimize(request)
-```
-
-The library determines an appropriate inference procedure automatically.
-
-Developers may eventually be able to specify high-level constraints such as quality, latency, or cost preferences, but the core objective is **autonomous optimization rather than manual inference tuning**.
+Planned adapters: OpenAI-compatible (which also covers OpenRouter, Groq, Together,
+Fireworks, DeepSeek, Mistral, and local vLLM / Ollama servers), Anthropic, and
+Google. Anthropic and Google are next, not done.
 
 ---
 
 ## Example API
 
-> The API below represents the intended direction and may change during implementation.
+> Provisional. Expected to change during Phase 1.
 
 ```python
 from inferconomy import optimize
 
 result = optimize(
     client=llm,
-    request="Explain eventual consistency with an example."
+    request="Explain eventual consistency with an example.",
 )
 
 print(result.text)
-print(result.usage)
-print(result.optimization)
+print(result.usage)        # exact token + cost accounting
+print(result.report)       # why this strategy, this budget, this stop
 ```
 
-Possible result metadata:
+A report, roughly:
 
 ```python
-result.optimization = {
-    "strategy": "direct",
-    "initial_budget": 180,
-    "additional_budget": 0,
-    "total_budget": 180,
-    "escalated": False,
-}
+result.report = OptimizationReport(
+    strategy="direct",
+    capabilities={"reasoning_budget": False, "usage_reporting": True},
+    initial_budget=180,
+    additional_budget=0,
+    total_budget=180,
+    escalated=False,
+    stopped_on="sufficiency",
+    cost_exact=True,
+)
 ```
 
-For a harder task:
-
-```python
-result.optimization = {
-    "strategy": "reason_verify",
-    "initial_budget": 400,
-    "additional_budget": 260,
-    "total_budget": 660,
-    "escalated": True,
-}
-```
+The report is a typed object, not a dict, and it is intended to be
+machine-readable. Every optimization should be auditable after the fact, and
+`policy=<your policy>` is the seam for supplying your own allocation behaviour.
 
 ---
 
-## Provider Independence
+## Evaluation methodology
 
-Inferconomy is intended to operate as an optimization layer around existing LLM clients.
-
-Potential integrations include:
-
-- OpenAI-compatible APIs
-- Anthropic-compatible APIs
-- Google models
-- Mistral
-- OpenRouter
-- local inference servers
-- custom LLM clients
-
-The project does not require ownership of the surrounding application architecture.
-
----
-
-## Framework Independence
-
-Inferconomy should be usable from:
-
-```text
-        ┌─────────────────────┐
-        │     Inferconomy      │
-        └──────────┬──────────┘
-                   │
-       ┌───────────┼────────────┐
-       │           │            │
-     Agent       Router       App
-       │           │            │
-    Cursor      DSPy        Custom API
-    Claude      LangGraph
-    ChatGPT     etc.
-```
-
-The library should remain useful whether the caller is:
-
-- an agent
-- an inference router
-- an IDE
-- a coding assistant
-- an LLM application
-- another framework
-- a custom service
-
----
-
-## Research Direction
-
-Inferconomy is intended to become more than a static token optimizer.
-
-The long-term research direction is **adaptive inference optimization**.
-
-Potential research areas include:
-
-### 1. Inference Strategy Selection
-
-Automatically determine which inference procedure is appropriate for a task.
-
-### 2. Budget Prediction
-
-Estimate the minimum initial computation required.
-
-### 3. Adaptive Continuation
-
-Continue inference only when the current state indicates that additional computation is valuable.
-
-### 4. Dynamic Strategy Switching
-
-Change inference strategy when the initial strategy is not sufficient.
-
-### 5. Early Termination
-
-Stop computation when the expected value of additional inference becomes low.
-
-### 6. Outcome-Based Calibration
-
-Use observed task outcomes, quality signals, token usage, and latency to improve future allocation decisions.
-
-### 7. Inference-Value Estimation
-
-Estimate whether another unit of computation is likely to improve the final result enough to justify its cost.
-
----
-
-## Optimization Objective
-
-A simplified formulation:
-
-```text
-minimize inference cost
-
-subject to:
-
-task quality >= required quality
-```
-
-A more general objective can be expressed as:
-
-```text
-minimize:
-
-    λ₁ × token_cost
-  + λ₂ × latency
-  + λ₃ × inference_overhead
-
-subject to:
-
-    quality >= quality_target
-```
-
-The exact optimization formulation is expected to evolve with research and experimentation.
-
----
-
-## Evaluation
-
-Inferconomy should be evaluated against fixed-budget and non-adaptive baselines.
-
-Important metrics:
+We report against fixed-budget and non-adaptive baselines. The comparison that
+matters is not *tokens saved* but **cost saved while task success is preserved**.
 
 | Metric | Purpose |
 |---|---|
 | Task success | Does optimization preserve quality? |
-| Output tokens | How much generation is saved? |
-| Reasoning tokens | How much inference computation is saved? |
-| Total tokens | Overall token economy |
-| Cost | Actual monetary savings |
-| Latency | Runtime impact |
-| Escalation rate | How often initial budgets fail? |
-| Failure rate | How often optimization harms results? |
-| Decision overhead | Cost of the optimization layer |
-| Quality delta | Quality compared with baseline |
-| Cost-quality frontier | Efficiency at different quality levels |
+| Quality delta vs. baseline | Quality change, not just a success rate |
+| Output / reasoning / total tokens | Where the compute went |
+| Cost | Actual monetary effect |
+| Latency | Runtime impact, including our own overhead |
+| Decision overhead | What the optimization layer itself cost |
+| Escalation rate | How often the initial budget was insufficient |
+| Failure rate | How often optimization harmed the result |
+| Cost-quality frontier | Efficiency across quality levels |
 
-The most important comparison is not:
+### Four controls we hold ourselves to
 
-```text
-tokens saved
-```
+Self-reported efficiency numbers are easy to manufacture. Four controls keep ours
+honest, and we consider a result without them unusable:
 
-but:
+1. **Oracle budgeter.** How much could *perfect* allocation have saved? Without
+   this upper bound you cannot tell a good result from a mediocre one.
+2. **Cost-matched baseline.** The fixed-budget baseline is allowed the *same*
+   token count. Otherwise any saving is a strawman.
+3. **Null condition and calibrated judging.** Judge noise is measured and
+   subtracted; a null configuration must measure as a difference of zero.
+4. **Per-domain reporting.** Gains on mathematical and code reasoning do not
+   transfer to summarization, extraction, or open-ended explanation. Results are
+   reported per category, never aggregated into a single favourable number.
 
-```text
-tokens/cost saved
-while preserving task success
-```
-
----
-
-## Benchmark Categories
-
-Evaluation should cover diverse workloads:
-
-- factual questions
-- extraction
-- classification
-- translation
-- summarization
-- explanation
-- comparison
-- mathematical reasoning
-- coding
-- debugging
-- planning
-- analysis
-- multi-step reasoning
-- structured generation
-
-A useful benchmark should measure the complete economics:
-
-```text
-Decision overhead
-        +
-Inference cost
-        +
-Latency
-        +
-Quality
-```
+Benchmark coverage spans factual QA, extraction, classification, translation,
+summarization, explanation, comparison, mathematical reasoning, coding,
+debugging, planning, analysis, and structured generation.
 
 ---
 
 ## Roadmap
 
-### Phase 1 — Foundation
+Sequenced so that each phase is defensible before the next is attempted. The
+harness comes first, on purpose: a measurement is worth more than a controller
+built on unmeasured assumptions.
 
-- [ ] Core library API
-- [ ] Provider abstraction
-- [ ] Request / response contracts
-- [ ] Token and cost telemetry
-- [ ] Baseline fixed-budget execution
-- [ ] Initial decision-engine adapter
-- [ ] Initial adaptive budget controller
+### Phase 0 — Measurement foundation
 
-### Phase 2 — Adaptive Inference
+- [ ] `pyproject.toml`, package skeleton, installable and importable
+- [ ] Token and cost telemetry with exact-vs-estimated accounting
+- [ ] Fixed-budget baseline harness
+- [ ] Oracle budgeter as an upper bound
+- [ ] Null condition and calibrated judge harness
 
-- [ ] Inference strategy abstraction
-- [ ] Strategy selection
-- [ ] Adaptive escalation
-- [ ] Sufficiency detection
-- [ ] Early termination
+### Phase 1 — One working path
+
+- [ ] Capability probe
+- [ ] OpenAI-compatible provider adapter
+- [ ] `DecisionEngine` and `Policy` protocols
+- [ ] `direct` and `reason` strategies
+- [ ] Sufficiency detection and escalation loop
+- [ ] First published cost-quality frontier on one benchmark
+
+### Phase 2 — Adaptation and breadth
+
+- [ ] `decompose`, `reason+verify`, `reason+refine`
+- [ ] Strategy switching mid-request
+- [ ] Decision-engine adapters beyond the built-in heuristic
+- [ ] Anthropic and Google adapters
 - [ ] Streaming support
 
 ### Phase 3 — Optimization
 
-- [ ] Budget calibration
-- [ ] Quality-aware optimization
-- [ ] Cost-quality frontier analysis
-- [ ] Runtime metrics
-- [ ] Benchmark suite
-- [ ] Automated policy evaluation
+- [ ] Budget calibration from observed outcomes
+- [ ] Quality-aware allocation
+- [ ] Benchmark suite across the full category list
+- [ ] Runtime metrics and regression gates in CI
 
-### Phase 4 — Advanced Research
+### Phase 4 — Research
 
 - [ ] Dynamic strategy composition
-- [ ] Inference-state-aware continuation
-- [ ] Learned budget policies
-- [ ] Learned strategy policies
+- [ ] Inference-state-aware continuation instead of restart
 - [ ] Value-of-computation estimation
-- [ ] Adaptive inference program synthesis
+- [ ] Learned allocation policies
+
+Phases 3 and 4 are research, not commitments. We would rather publish one
+measured result than four aspirations. Notably, a *negative* result — that
+strategy composition does not beat the best single strategy — is a valid and
+useful outcome, and we will publish it as one.
 
 ---
 
-## Design Principles
+## Progress log
 
-### 1. Quality before savings
+We publish progress here rather than only in release notes, so the trajectory is
+visible while the design is still open to review. Convention:
 
-Never optimize tokens at the expense of meaningful task quality.
+- Newest entry first, `YYYY-MM-DD` heading.
+- Added in the same pull request as the change it describes.
+- States what works, not what is planned. Plans belong in the roadmap.
+- Honest about regressions. A number that got worse goes in the log, not hidden.
 
-### 2. Minimum sufficient computation
+### 2026-09-26
 
-Do not assume every task deserves the same inference budget.
-
-### 3. Autonomous by default
-
-Developers should not need to hand-tune inference strategies.
-
-### 4. Model-agnostic
-
-The optimization layer should work across supported LLM providers.
-
-### 5. Framework-agnostic
-
-Inferconomy should complement existing frameworks rather than compete with them.
-
-### 6. Measurable
-
-Every optimization should be measurable in quality, tokens, latency, and cost.
-
-### 7. Adaptive
-
-The system should be able to change its decision when the current inference is insufficient.
+Project created. README restructured to separate the design from the plan.
+Public architecture, design principles, evaluation methodology, and a
+measurement-first roadmap are now defined. No implementation yet.
 
 ---
 
-## The Vision
+## Documentation
 
-Today's LLM applications often treat inference as a fixed operation:
+Full documentation will live in the [project wiki](https://github.com/sachinp-iit/Inferconomy/wiki):
+core concepts, getting started, providers, models and capabilities, strategies,
+policies and budgets, custom decision engines, telemetry, evaluation
+methodology, benchmarks, and architecture.
 
-```text
-Prompt → Model → Response
-```
-
-Inferconomy aims to make it adaptive:
-
-```text
-Prompt
-  ↓
-Understand the task
-  ↓
-Determine the appropriate inference procedure
-  ↓
-Allocate the minimum sufficient computation
-  ↓
-Infer
-  ↓
-Evaluate sufficiency
-  ↓
-Continue / adapt / stop
-  ↓
-Response
-  ↓
-Learn from the outcome
-```
-
-The long-term vision is an inference layer where **computation becomes adaptive rather than predetermined**.
-
-> **Inferconomy — Optimize Inference. Maximize Token Economy.**
+This README announces and orients. The wiki explains. Sections are not
+duplicated between them.
 
 ---
 
-## Status
+## What Inferconomy is not
 
-🚧 **Early-stage research / development**
-
-The project is currently being designed around the core hypothesis of adaptive inference optimization and token economy.
-
-The architecture, APIs, strategies, and optimization algorithms are expected to evolve as benchmarks and experiments establish what works reliably.
+Not an agent framework, a RAG framework, a tool orchestration framework, a
+memory framework, a workflow engine, or a model router. Those can use
+Inferconomy as an inference optimization layer.
 
 ---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Larger architectural or strategy changes
+should open an issue first so the trade-offs can be discussed. Changes that
+affect policy behaviour are expected to come with evaluation results.
+
+## Security
+
+See [SECURITY.md](SECURITY.md). Please report vulnerabilities privately rather
+than through public issues.
 
 ## License
 
-MIT License.
-
+MIT. See [LICENSE](LICENSE).
