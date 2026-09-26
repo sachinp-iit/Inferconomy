@@ -145,7 +145,7 @@ number we report.
 | Module | Responsibility |
 |---|---|
 | `inferconomy.api` | `optimize()` — the single public entry point |
-| `inferconomy.types` | `Request`, `Response`, `Usage`, `OptimizationReport` |
+| `inferconomy.contracts` | `Request`, `Response`, `Usage`, `OptimizationReport`, and the enums |
 | `inferconomy.capabilities` | Probes what the target model supports |
 | `inferconomy.decision` | `DecisionEngine` protocol + adapters |
 | `inferconomy.strategy` | Strategy catalogue and selection |
@@ -217,19 +217,31 @@ A report, roughly:
 ```python
 result.report = OptimizationReport(
     strategy="direct",
-    capabilities={"reasoning_budget": False, "usage_reporting": True},
+    capabilities_used=(Capability.USAGE_REPORTING,),
     initial_budget=180,
     additional_budget=0,
-    total_budget=180,
-    escalated=False,
-    stopped_on="sufficiency",
-    cost_exact=True,
+    stopped_on=StopReason.SUFFICIENCY,
+    decisions=("classified as direct-response task", "allocated 180 tokens"),
 )
+
+result.report.total_budget  # 180  (derived, cannot contradict the fields)
+result.report.escalated  # False
+result.usage.cost_exact  # whether cost is measured or estimated
 ```
 
 The report is a typed object, not a dict, and it is intended to be
 machine-readable. Every optimization should be auditable after the fact, and
 `policy=<your policy>` is the seam for supplying your own allocation behaviour.
+
+Two properties of these types are worth knowing before you rely on them:
+
+- **One request is not one call.** Adaptive allocation means several LLM calls
+  can serve a single user request, so `Usage` aggregates across calls and counts
+  them in `llm_calls`. Code that assumes one call per request will compute cost
+  wrongly.
+- **Not every number is a measurement.** `Usage` carries `cost_exact`, which is
+  `False` by default. A library should under-claim precision rather than let you
+  read an estimate as a fact.
 
 ---
 
@@ -279,7 +291,8 @@ built on unmeasured assumptions.
 
 ### Phase 0 — Measurement foundation
 
-- [ ] `pyproject.toml`, package skeleton, installable and importable
+- [x] `pyproject.toml`, package skeleton, installable and importable
+- [x] Core request / response contracts, typed and serializable
 - [ ] Token and cost telemetry with exact-vs-estimated accounting
 - [ ] Fixed-budget baseline harness
 - [ ] Oracle budgeter as an upper bound
@@ -356,6 +369,42 @@ Inferconomy is now a real package rather than a directory of notes.
   test enforces the second half
 
 `optimize()` is not exported yet. It will be when it exists.
+
+### 2026-09-26 — US-002, core request and response contracts
+
+`Request`, `Response`, `Usage`, and `OptimizationReport` now exist as frozen,
+validated, serializable types. 73 tests, 100% statement coverage of the module.
+
+Decisions worth recording, because they are not obvious from the signatures:
+
+- **`inferconomy.contracts`, not `inferconomy.types`.** Avoids shadowing the
+  standard library `types` module. The module map above was updated to match.
+- **One request is not one call.** `Usage` aggregates across every LLM call and
+  counts them in `llm_calls`. Anyone computing cost per request needs this.
+- **`Usage.cost_exact` defaults to `False`.** A library should under-claim
+  precision rather than let a caller read an estimate as a measurement. Summing
+  usage is conjunctive on exactness for the same reason: one estimated component
+  makes the total an estimate.
+- **`total_budget` and `escalated` are derived, not stored.** A report cannot
+  claim a total that contradicts its own fields, because the inconsistency is
+  not representable.
+- **Our `StopReason` is separate from the provider's `finish_reason`.** One says
+  whether the optimizer was satisfied; the other says what the model did. Both
+  are reported, neither is normalized into the other.
+- **Subclass invariants are enforced.** `reasoning_tokens` cannot exceed
+  `output_tokens`, `cached_input_tokens` cannot exceed `input_tokens`, and
+  `cost_exact=True` requires a cost. These are the mistakes that produce
+  confidently wrong savings claims.
+- **Serialization is versioned and strict.** Reports carry `schema_version`, and
+  a newer one is rejected rather than silently loaded as this version. Unknown
+  enum values raise with the valid options listed, rather than being dropped.
+- **Sequence fields are normalized to tuples** on construction, so a caller
+  passing a list cannot mutate a frozen object after the fact.
+
+`Request` deliberately carries no sampling parameters and no quality target. Those
+belong to the strategy and the policy; accepting them here would put the
+optimization decision back in the caller's hands, which is the thing this project
+exists to remove.
 
 ---
 

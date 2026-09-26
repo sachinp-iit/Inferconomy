@@ -58,8 +58,12 @@ jobs:
         run: uv build
 
       - name: Verify distributions install and import
+        # --no-cache is required, not defensive: uv keys its cache by wheel
+        # filename, so a version bump that does not change the filename would
+        # otherwise verify a stale artifact and pass on it.
         run: |
-          uv run --isolated --no-project --with dist/inferconomy-*.whl -- \
+          uv run --isolated --no-project --no-cache \
+            --with dist/inferconomy-*.whl -- \
             python -c "import inferconomy; print(inferconomy.__version__)"
 
   docs:

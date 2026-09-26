@@ -24,7 +24,7 @@ Inferconomy is a real library rather than a directory of notes.
 **Done when** `pip install -e .` succeeds, `import inferconomy` works from a clean
 environment, the package version is importable, and CI runs on push.
 
-### US-002 · Core request and response types `todo`
+### US-002 · Core request and response types `done`
 
 As a developer, I want typed `Request`, `Response`, `Usage`, and
 `OptimizationReport` objects, so that results are self-describing and not
