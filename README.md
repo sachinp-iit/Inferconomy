@@ -146,6 +146,8 @@ number we report.
 |---|---|
 | `inferconomy.api` | `optimize()` — the single public entry point |
 | `inferconomy.contracts` | `Request`, `Response`, `Usage`, `OptimizationReport`, and the enums |
+| `inferconomy.client` | `Client` protocol and `CompletionOptions` — the only outside-world dependency |
+| `inferconomy.testing` | `FakeClient` and helpers, shipped so users can test without spending tokens |
 | `inferconomy.capabilities` | Probes what the target model supports |
 | `inferconomy.decision` | `DecisionEngine` protocol + adapters |
 | `inferconomy.strategy` | Strategy catalogue and selection |
@@ -293,6 +295,7 @@ built on unmeasured assumptions.
 
 - [x] `pyproject.toml`, package skeleton, installable and importable
 - [x] Core request / response contracts, typed and serializable
+- [x] `Client` protocol and deterministic fake, suite runs fully offline
 - [ ] Token and cost telemetry with exact-vs-estimated accounting
 - [ ] Fixed-budget baseline harness
 - [ ] Oracle budgeter as an upper bound
@@ -405,6 +408,39 @@ Decisions worth recording, because they are not obvious from the signatures:
 belong to the strategy and the policy; accepting them here would put the
 optimization decision back in the caller's hands, which is the thing this project
 exists to remove.
+
+### 2026-09-26 — US-003, client protocol and deterministic fake
+
+`inferconomy.client` defines the whole of the library's dependency on the outside
+world. A provider adapter implements `Client`; nothing else in the library knows
+which provider or SDK is underneath. 111 tests, 100% coverage.
+
+- **The protocol has two members** — `capabilities` and `complete` — and a test
+  enforces that. A protocol that grows to accommodate a provider's full feature
+  set stops being honest about what it supports.
+- **`CompletionOptions` is separate from `Request`.** The request says *what* to
+  solve; the options say *how* to call the API. Widening `Request` to carry the
+  allocated budget would collapse the distinction that the budget controller
+  exists to exploit.
+- **The protocol is async.** Adaptive allocation makes a sequence of *dependent*
+  calls — classify, generate, judge sufficiency, escalate — and every major
+  provider SDK is async-first. A sync core would cost a thread per call or a
+  nested event loop, and latency is one of the metrics we report.
+- **Adapters ignore options they cannot honour** rather than raising, which is
+  what lets one adapter span endpoints with different feature sets. Genuine
+  failures still raise, so a real error is never reported as a successful
+  truncated answer.
+- **`FakeClient` ships inside the package**, not just in our test suite. Anyone
+  integrating Inferconomy needs to test their own code without spending tokens,
+  and that need does not stop at our repository.
+- **The fake raises when its script runs out** rather than repeating the last
+  response. Silently repeating hides a test that made more calls than it
+  intended, which in a library whose purpose is counting calls is exactly the bug
+  worth catching. `repeat_last=True` opts in.
+- **The suite is offline by construction.** An autouse fixture in `conftest.py`
+  fails any attempt to reach a non-loopback host, with tests asserting that the
+  guard both blocks external hosts and permits loopback — a guard nobody
+  verifies is not a guard.
 
 ---
 

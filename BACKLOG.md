@@ -33,7 +33,7 @@ stringly-typed dictionaries.
 **Done when** all four types exist, are immutable where appropriate, and are
 covered by round-trip serialization tests.
 
-### US-003 · Client protocol and fake client `todo`
+### US-003 · Client protocol and fake client `done`
 
 As a developer, I want to inject any LLM client behind a narrow protocol, so
 that the library never depends on a specific provider SDK.
