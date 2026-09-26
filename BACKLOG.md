@@ -16,7 +16,7 @@ Status legend: `todo` · `in progress` · `done`
 > Nothing here optimizes anything. This phase exists so that later claims can be
 > checked rather than believed.
 
-### US-001 · Installable package skeleton `todo`
+### US-001 · Installable package skeleton `done`
 
 As a developer, I want to install the package and import it, so that
 Inferconomy is a real library rather than a directory of notes.

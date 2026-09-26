@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install package and dev dependencies
+        run: uv sync --all-extras --python ${{ matrix.python-version }}
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Lint (format)
+        run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy
+
+      - name: Test
+        run: uv run pytest --cov=inferconomy --cov-report=term-missing
+
+  build:
+    name: build distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Verify distributions install and import
+        run: |
+          uv run --isolated --no-project --with dist/inferconomy-*.whl -- \
+            python -c "import inferconomy; print(inferconomy.__version__)"
+
+  docs:
+    name: readme internal links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check relative links resolve
+        run: |
+          python - <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          root = pathlib.Path(".")
+          readme = (root / "README.md").read_text(encoding="utf-8")
+          missing = []
+          for match in re.finditer(r"\]\((?!https?://|#)([^)#]+)", readme):
+              target = match.group(1).strip()
+              if not (root / target).exists():
+                  missing.append(target)
+          if missing:
+              print("Broken relative links in README.md:", *missing, sep="\n  ")
+              sys.exit(1)
+          print("README relative links OK")
+          PY

@@ -14,6 +14,10 @@ wraps the LLM client you already have.
 pip install inferconomy        # status: not yet released
 ```
 
+The package builds and installs today (`US-001` is done) but has no public
+release and no functionality beyond its version. See the
+[progress log](#progress-log) for exactly where it stands.
+
 Work proceeds one user story at a time, tracked in [BACKLOG.md](BACKLOG.md) and
 recorded in the [progress log](#progress-log).
 
@@ -204,8 +208,8 @@ result = optimize(
 )
 
 print(result.text)
-print(result.usage)        # exact token + cost accounting
-print(result.report)       # why this strategy, this budget, this stop
+print(result.usage)  # exact token + cost accounting
+print(result.report)  # why this strategy, this budget, this stop
 ```
 
 A report, roughly:
@@ -334,6 +338,24 @@ visible while the design is still open to review. Convention:
 Project created. README restructured to separate the design from the plan.
 Public architecture, design principles, evaluation methodology, and a
 measurement-first roadmap are now defined. No implementation yet.
+
+### 2026-09-26 — US-001, installable package skeleton
+
+Inferconomy is now a real package rather than a directory of notes.
+
+- `pyproject.toml` with hatchling, src layout, dynamic versioning
+- **Zero runtime dependencies**, and that is a design commitment rather than an
+  accident: a library that wraps a client you already have should not force a
+  provider SDK or a framework on you
+- `import inferconomy` and `__version__` work from a clean environment
+- Tests assert the installed distribution version matches `__init__`, so the
+  dynamic version cannot silently drift
+- CI on Python 3.10–3.13: lint, format, strict `mypy`, tests with coverage, plus
+  a build-and-install check and a README link check
+- `Typing :: Typed` is declared and the `py.typed` marker actually ships — a
+  test enforces the second half
+
+`optimize()` is not exported yet. It will be when it exists.
 
 ---
 
