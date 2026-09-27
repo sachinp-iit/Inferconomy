@@ -154,7 +154,7 @@ number we report.
 | `inferconomy.strategy` | Strategy catalogue and selection |
 | `inferconomy.policy` | `Policy` protocol — budget allocation, escalation, stopping |
 | `inferconomy.runtime` | The generate/inspect/continue/stop loop |
-| `inferconomy.providers` | Provider clients and usage extraction |
+| `inferconomy.providers` | `OpenAICompatibleClient`, the `Transport` seam, and the provider error taxonomy |
 | `inferconomy.telemetry` | Token, cost, and latency accounting |
 | `inferconomy.tokens` | Pluggable `TokenEstimator` for providers that do not report usage |
 | `inferconomy.costs` | Versioned price table, loadable from bundled JSON or an operator's file |
@@ -226,7 +226,70 @@ being quietly overwritten.
 
 Planned adapters: OpenAI-compatible (which also covers OpenRouter, Groq, Together,
 Fireworks, DeepSeek, Mistral, and local vLLM / Ollama servers), Anthropic, and
-Google. Anthropic and Google are next, not done.
+Google. The OpenAI-compatible one is done. Anthropic and Google are next, not done.
+
+### Using an OpenAI-compatible endpoint
+
+```python
+from inferconomy.providers import OpenAICompatibleClient
+
+api = OpenAICompatibleClient(
+    base_url="https://api.deepseek.com",  # or api.openai.com/v1, or localhost:8000/v1
+    api_key=os.environ["DEEPSEEK_API_KEY"],
+)
+```
+
+The base URL you paste is the one from that provider's docs; the `/v1` and
+`/chat/completions` parts are filled in for you, and a base that already has them
+is left alone.
+
+`httpx` is needed for the default transport and comes from the `openai` extra.
+It is an extra rather than a dependency because **the library itself has none** -
+the adapter accepts any object with a `post_json` method, so if you already have
+an HTTP client with your proxy, CA bundle, and connection pool configured, pass
+it in instead:
+
+```python
+OpenAICompatibleClient(base_url=..., transport=HttpxTransport(client=my_client))
+```
+
+Things worth knowing, because they are where "one adapter" does real work:
+
+- **`max_tokens` or `max_completion_tokens` is configurable.** OpenAI rejects the
+  first for its reasoning models; the local servers accept only the first. There
+  is no value that works everywhere, so it is a setting
+  (`max_tokens_field=`) rather than a guess.
+- **There is no standard reasoning-token budget field** in this format, so
+  Inferconomy does not invent one. It claims no such capability and omits the
+  value unless you name the endpoint's dialect. A made-up field name would either
+  be ignored - silent pretence - or draw a 400 on every call.
+- **A lever you did not confirm is dropped, and one you set is sent.** Set
+  `effort="high"` and this adapter sends `reasoning_effort`; on an endpoint
+  without that field the 400 names it, which is better than ignoring the value
+  and leaving you to believe the model was told to think harder. Probe first and
+  the problem disappears:
+
+  ```python
+  report = await probe_capabilities(api)
+  options = report.adapt(CompletionOptions(effort="high", reasoning_budget=4096))
+  response = await api.complete(request, options.options)
+  ```
+
+- **Usage is the provider's, or an estimate, and always says which.** A response
+  with a usage block gives `tokens_exact=True`; one without falls back to
+  `estimate_usage`, which is `tokens_exact=False`. Cost is never invented, because
+  cost needs a rate the endpoint did not send.
+- **Failures are classified by what you can do about them** - `AuthenticationError`
+  and `RequestRejectedError` are not retryable, `RateLimitError`, `ServerError` and
+  `TransportError` are - and the provider's own message always survives on
+  `error.provider_message`. `ContextLengthExceeded` is separated out because
+  shrinking the request is a valid response to it.
+
+**Known limitation, stated rather than hidden:** endpoints fold prompt cache hits
+into `prompt_tokens` and `Usage` has nowhere to put a cached-token count, so a
+flat price table *over-states* the cost of a cached prompt. It errs upward rather
+than losing money, and fixing it properly means a cached-token field on `Usage`
+and tiered rates in the price table.
 
 ---
 
@@ -356,13 +419,13 @@ built on unmeasured assumptions.
 ### Phase 1 — One working path
 
 - [x] Capability probe
-- [ ] OpenAI-compatible provider adapter
+- [x] OpenAI-compatible provider adapter
 - [ ] `DecisionEngine` and `Policy` protocols
 - [ ] `direct` and `reason` strategies
 - [ ] Sufficiency detection and escalation loop
 - [ ] First published cost-quality frontier on one benchmark *(harness, publish
-      gate, and capability probe shipped; needs US-011 before any real data
-      exists)*
+      gate, capability probe, and provider adapter all shipped; needs
+      credentials and a real run)*
 
 ### Phase 2 — Adaptation and breadth
 
@@ -634,6 +697,84 @@ print(result.citable)  # False if any cost was estimated
 
 ---
 
+### 2026-09-27 — US-011, OpenAI-compatible provider adapter
+
+`inferconomy.providers.OpenAICompatibleClient` speaks the one wire format that
+OpenAI, OpenRouter, Groq, Together, Fireworks, DeepSeek, Mistral, vLLM, and Ollama
+all adopted, and absorbs the dialects underneath it. 702 tests, 100% coverage.
+
+```python
+api = OpenAICompatibleClient(base_url="https://api.deepseek.com", api_key=...)
+report = await probe_capabilities(api)  # US-010
+options = report.adapt(CompletionOptions(effort="high"))  # drops it if unconfirmed
+response = await api.complete(request, options.options)
+```
+
+- **The `Transport` seam is what keeps the library dependency-free.** The stdlib
+  has no async HTTP, and there are no runtime dependencies, so the HTTP client is
+  either optional or injected. It is injected: `Transport` is a `post_json` method,
+  the default wraps `httpx` behind an extra, and a caller with their own client
+  passes it in. This is also why the suite can prove normalization against
+  recorded payloads offline, which the repository's network guard requires anyway.
+  A test now asserts the *installed distribution metadata* carries no runtime
+  dependency, so the commitment is checked rather than repeated in a comment.
+- **The interesting work is the disagreements, not the envelope.** These endpoints
+  agree on chat completions and differ on nearly everything inside it:
+  `max_tokens` versus `max_completion_tokens`, `reasoning` versus
+  `reasoning_content`, usage blocks that some gateways strip entirely. All of it
+  is settled inside the adapter, so a caller reads one `Response` and never learns
+  which provider they are on.
+- **There is no standard field for a separate reasoning-token budget** in this
+  format, and that is a finding rather than a gap: OpenAI folds reasoning into
+  `max_completion_tokens`, OpenRouter wants a nested object, DeepSeek has neither.
+  So the adapter refuses to invent a field name, claims no such capability, and
+  omits the value unless a dialect is named. A guessed field would be ignored -
+  which is the silent pretence this library exists to prevent - or draw a 400 on
+  every call.
+- **It claims only what the format guarantees.** Usage reporting is standardized;
+  reasoning content and an effort knob are vendor extensions, so claiming them
+  would be an overclaim that US-010's probe then flags on every Mistral request.
+  Declared capabilities default to `USAGE_REPORTING` alone, and the runtime probe
+  supplies the rest.
+- **A lever you set is sent, and refused loudly if the endpoint lacks it.** Set
+  `effort="high"` on Mistral and you get a 400 naming `reasoning_effort`, not a
+  silent success. The tempting alternative - drop the value and carry on - leaves
+  a caller believing the model was told to think harder when it was not. The
+  supported order is probe, adapt, send, and there is a test that runs all three.
+- **Usage is the provider's or an estimate, and never better than it is.** A
+  response with a usage block gives `tokens_exact=True`; without one,
+  `estimate_usage` gives `tokens_exact=False` and cost stays `None`, because cost
+  needs a rate the endpoint did not send. Two calls that differ only in whether
+  the provider reported usage land on opposite sides of the provenance boundary,
+  which is a test.
+- **Errors are classified by what a caller can do about them.** `retryable` is the
+  field to branch on, and it defaults to `False`, because retrying an
+  unclassifiable error forever is how a bug becomes an outage. A rejected key is
+  permanent; a 429, a 5xx, and a reset connection are not. The provider's own
+  message always survives on `error.provider_message`, including the nested,
+  bare-string, and top-level spellings these endpoints use, and response bodies are
+  clipped before they reach an exception because error text ends up in logs.
+  `ContextLengthExceeded` is split out because shrinking the request is a valid
+  response to it - at the cost of classifying on message text, which is a guess
+  and labelled as one.
+- **A success that is not a success is a failure.** A 200 carrying an HTML error
+  page, a 200 with no choices, a choice with no message - all raise, because
+  returning a blank answer for them would let a misconfigured gateway look like a
+  model with nothing to say. A null `content` is *not* one of those: reasoning
+  models emit it legitimately, and that is an empty answer.
+- **Base URLs normalize from what the docs actually say.** `https://api.deepseek.com`
+  becomes `.../v1/chat/completions`; a base already ending in the full path is left
+  alone; a local server with no version segment gets one, because Ollama's
+  compatible route lives under `/v1` and the bare path is a 404 that looks like a
+  broken server. All eight are covered by table tests.
+
+**Known limitation, stated rather than hidden:** cache-hit prompt tokens are folded
+into `prompt_tokens` and `Usage` has no field for them, so a flat price table
+over-states the cost of a cached prompt. It errs upward instead of losing the
+difference, and doing it properly means a cached-token field on `Usage` plus tiered
+rates in the price table - a change to those contracts, not something to smuggle
+into an adapter.
+
 ### 2026-09-27 — US-010, capability probe
 
 `inferconomy.capabilities` finds out what a target model actually does instead of
@@ -790,8 +931,8 @@ payload = frontier.publish()  # raises UnpublishableFrontier if a control failed
   of a results file meets the objections alongside the curve.
 
 **What is not done, and why.** The published curve needs real data, and there is
-none: there is no provider adapter yet (US-011) and no credentials to call
-one. A frontier built on the shipped fake would be a real cost-quality curve of a
+none: an adapter now exists (US-011) but there are no credentials to call one
+with. A frontier built on the shipped fake would be a real cost-quality curve of a
 test double, and publishing it as evidence would be precisely the failure this
 project exists to prevent. The committed `benchmarks/frontier.json` is a template
 with placeholder model and judge, fingerprinted so the reproducibility claim

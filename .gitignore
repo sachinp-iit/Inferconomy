@@ -95,10 +95,11 @@ ipython_config.py
 # Pipfile.lock
 
 # UV
-#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-# uv.lock
+#   Generally recommended, and more commonly ignored for libraries. This is a
+#   library supporting Python 3.10-3.13, and a lock resolved against one
+#   interpreter and one platform would misrepresent what CI installs on the
+#   others. Consumers resolve our declared ranges; the extra is optional anyway.
+uv.lock
 
 # poetry
 #   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.

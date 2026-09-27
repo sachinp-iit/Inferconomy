@@ -128,11 +128,11 @@ project on evidence.
 place and the data is reproducible from a committed config.
 
 > **Not done, and the reason is that producing the data would be dishonest.**
-> The machinery and the publish gate ship; the curve does not, because there is
-> no provider adapter (US-010/US-011) and no credentials to call one. A frontier
-> built on the shipped fake would be a real cost-quality curve of a test double,
-> and publishing it as evidence would be the exact failure this project exists to
-> prevent.
+> The machinery, the publish gate, the capability probe, and a provider adapter
+> all ship; the curve does not, because there are no credentials to call one with.
+> A frontier built on the shipped fake would be a real cost-quality curve of a
+> test double, and publishing it as evidence would be the exact failure this
+> project exists to prevent.
 >
 > What ships in `inferconomy.frontier`: `build_frontier` assembles a curve from
 > measured runs and judged quality, and `Frontier.publish()` raises
@@ -149,7 +149,7 @@ place and the data is reproducible from a committed config.
 > different baseline is now rejected, because dividing a saving by a bound taken
 > against another reference arm is a ratio of two unrelated numbers.
 >
-> Remaining to finish this story: US-010 and US-011, then a real run against a real
+> Remaining to finish this story: credentials, then a real run against a real
 > judge, then publication.
 
 ---
@@ -207,7 +207,7 @@ capability.
 > text attached, because describing a degraded environment is the job and probing
 > at startup should not stop the process. 554 tests, 100% coverage.
 
-### US-011 · OpenAI-compatible provider adapter `todo`
+### US-011 · OpenAI-compatible provider adapter `done`
 
 As a developer, I want to pass any OpenAI-compatible endpoint, so that one
 adapter covers OpenAI, OpenRouter, Groq, Together, Fireworks, DeepSeek, Mistral,
@@ -215,6 +215,56 @@ and local vLLM / Ollama servers.
 
 **Done when** the adapter normalizes requests, responses, and usage across those
 endpoints without provider-specific logic leaking upward.
+
+> Shipped as `inferconomy.providers.OpenAICompatibleClient`, with a `Transport`
+> seam, a provider error taxonomy, and US-010's `CapabilityProbeProvider`
+> implemented on top. 702 tests, 100% coverage, suite still fully offline.
+>
+> The zero-dependency commitment is what shaped the design. The stdlib has no
+> async HTTP and the library has no runtime dependencies, so the HTTP client is
+> injected: `Transport` is one `post_json` method, the default wraps `httpx`
+> behind an `openai` extra, and a caller with their own configured client passes
+> it in. `tests/test_package.py` now asserts the *installed distribution
+> metadata* carries no runtime dependency, so the claim is enforced rather than
+> repeated in a comment.
+>
+> Normalization, all of it inside the adapter so a caller reads one `Response`:
+> `max_tokens` versus `max_completion_tokens` is a setting rather than a guess;
+> `reasoning` (OpenRouter) and `reasoning_content` (DeepSeek) both land in
+> `Response.reasoning_text`; a missing usage block becomes an estimate marked
+> `tokens_exact=False`; `finish_reason` is preserved verbatim because normalizing
+> it would discard the only ground truth about what the model did.
+>
+> The notable conclusion is a *negative* one. This format has no standard field
+> for a separate reasoning-token budget - OpenAI folds reasoning into
+> `max_completion_tokens`, OpenRouter wants a nested object, DeepSeek has neither
+> - so the adapter refuses to invent a field name, claims no such capability, and
+> omits the value unless a dialect is named. A guessed name would be ignored,
+> which is precisely the silent pretence this project exists to prevent.
+> For the same reason it declares only `USAGE_REPORTING`, the one thing the
+> format guarantees, and lets the runtime probe supply the rest.
+>
+> Failures are typed by what a caller can do about them, with `retryable` the
+> field to branch on and a default of `False` - retrying an unclassifiable error
+> forever is how a bug becomes an outage. A rejected key is permanent; 429, 5xx,
+> and a reset connection are not. The provider's own message always survives on
+> `error.provider_message`, across the nested, bare-string, and top-level
+> spellings these endpoints use, and bodies are clipped before reaching an
+> exception because error text ends up in logs. `ContextLengthExceeded` is split
+> out because shrinking the request is a valid response, at the cost of
+> classifying on message text, which is a guess and labelled one.
+>
+> A success that is not a success raises: a 200 carrying an HTML error page, a 200
+> with no choices, a choice with no message. A null `content` does not, because
+> reasoning models emit it legitimately.
+>
+> Known limitation, stated rather than hidden: cache-hit prompt tokens are folded
+> into `prompt_tokens` and `Usage` has no field for them, so a flat price table
+> over-states the cost of a cached prompt. Erring upward rather than losing the
+> difference; fixing it properly means a cached-token field on `Usage` and tiered
+> rates in the price table, which is a change to those contracts.
+>
+> Still blocking US-009: credentials for a real run against a real judge.
 
 ### US-012 · Decision engine protocol and heuristic adapter `todo`
 
