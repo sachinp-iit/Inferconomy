@@ -69,13 +69,19 @@ the wheel, a table `version` and `schema_version` independent of the package, an
 `as_of`, and `verified`; no bundled price is verified, so no cost derived from
 the snapshot is ever reported as exact.
 
-### US-006 · Fixed-budget baseline runner `todo`
+### US-006 · Fixed-budget baseline runner `done`
 
 As a researcher, I want to run a benchmark with a fixed strategy and budget, so
 that I have a reference point to compare against.
 
 **Done when** a baseline run is reproducible from a config alone and emits the
 full metric row.
+
+Delivered as `inferconomy.benchmark`: `BaselineConfig` serialises to JSON and
+carries a `fingerprint` hash of its canonical form, `run_baseline` emits a
+`MetricRow` per task and repetition, and `RunResult.by_category` is the only
+aggregation offered. Rows carry `usage_basis`, `citable`, zero decision overhead,
+`escalated=False`, and `quality=None` until a judge exists.
 
 ### US-007 · Oracle budgeter `todo`
 

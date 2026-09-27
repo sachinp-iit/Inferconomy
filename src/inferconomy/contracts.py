@@ -123,7 +123,7 @@ class UsageBasis(str, Enum):
 _EnumT = TypeVar("_EnumT", bound=Enum)
 
 
-def _decode_enum(enum_type: type[_EnumT], value: object, field_name: str) -> _EnumT:
+def decode_enum(enum_type: type[_EnumT], value: object, field_name: str) -> _EnumT:
     """Decode a serialized enum value, failing loudly on anything unrecognised.
 
     A silently ignored unknown value would let a report from a future version
@@ -539,13 +539,13 @@ class OptimizationReport:
         return cls(
             strategy=strategy,
             capabilities_used=tuple(
-                _decode_enum(Capability, item, "capability")
+                decode_enum(Capability, item, "capability")
                 for item in (data.get("capabilities_used") or ())
             ),
             usage=(None if raw_usage is None else Usage.from_dict(raw_usage)),
             initial_budget=int(data.get("initial_budget", 0)),
             additional_budget=int(data.get("additional_budget", 0)),
-            stopped_on=_decode_enum(
+            stopped_on=decode_enum(
                 StopReason,
                 data.get("stopped_on", StopReason.STRATEGY_COMPLETE.value),
                 "stopped_on",

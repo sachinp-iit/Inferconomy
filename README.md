@@ -158,6 +158,7 @@ number we report.
 | `inferconomy.telemetry` | Token, cost, and latency accounting |
 | `inferconomy.tokens` | Pluggable `TokenEstimator` for providers that do not report usage |
 | `inferconomy.costs` | Versioned price table, loadable from bundled JSON or an operator's file |
+| `inferconomy.benchmark` | Fixed-budget baseline runs, reproducible from a config file |
 
 ### Design principles
 
@@ -300,7 +301,7 @@ built on unmeasured assumptions.
 - [x] Core request / response contracts, typed and serializable
 - [x] `Client` protocol and deterministic fake, suite runs fully offline
 - [x] Token and cost telemetry with exact-vs-estimated accounting
-- [ ] Fixed-budget baseline harness
+- [x] Fixed-budget baseline harness
 - [ ] Oracle budgeter as an upper bound
 - [ ] Null condition and calibrated judge harness
 
@@ -504,6 +505,37 @@ coverage.
   agreeing.
 - **Pricing never compounds a previous estimate.** A record that already carries a
   cost is priced from its token counts alone.
+
+### 2026-09-26 — US-006, fixed-budget baseline runner
+
+`inferconomy.benchmark` runs a benchmark at a fixed budget and emits the full
+metric row. 287 tests, 100% coverage.
+
+- **A run is reproducible from its config alone, and that is checkable.**
+  `BaselineConfig` serialises to JSON and `fingerprint` hashes the canonical
+  form; the fingerprint is recorded in the result. Reproducibility is a comparison
+  of two hashes rather than a promise.
+- **No result contains a wall-clock timestamp.** A field that changes on every run
+  would make that comparison vacuous. Latency comes from the provider's own
+  reported `latency_ms`.
+- **The baseline is prevented from getting clever.** One call per task, no
+  inspection of the output, no retry, no escalation. `escalated` is always False
+  and `decision_overhead_ms` always 0.0 — recorded as constants precisely so an
+  adaptive run has a zero point to be measured against.
+- **Quality is `None`, not zero.** No judge exists yet, and a zero would read as a
+  task that scored nothing rather than one that was never scored.
+- **There is no grand mean.** `by_category()` is the only aggregation, because a
+  single number across heterogeneous categories measures the category mix rather
+  than the optimiser. This is per-domain reporting enforced by the API rather
+  than promised in a footnote.
+- **Mean cost is taken over priced rows only,** and the count of priced rows is
+  reported beside it. Averaging over unpriced rows would report an unknown cost
+  as a free one.
+- **Provenance survives the run.** Each row carries `usage_basis` and `citable`,
+  and the run records the price table version and whether any of its rates were
+  verified — so "reported usage, unverified rate" stays visible as exactly that.
+- **A provider error aborts the run.** A partial run that looks complete is worse
+  than a crash, because a crash cannot be mistaken for a result.
 
 ---
 
