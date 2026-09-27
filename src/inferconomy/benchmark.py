@@ -505,6 +505,8 @@ ORACLE_CAVEATS = (
     "A bound on savings is only as exact as the costs inside it. If the underlying "
     "usage figures are estimated, or the price table is unverified, this is an "
     "estimate of an estimate.",
+    "The bound is computed against one baseline budget. Comparing it to a saving "
+    "measured against a different baseline divides two unrelated numbers.",
 )
 """The reasons this number cannot be achieved, carried inside the data.
 

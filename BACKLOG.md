@@ -119,13 +119,38 @@ noise is quantified per benchmark.
 > than averaged, `PROXY` bases make a report `citable=False`, and aggregation is
 > canonical so input order cannot move the answer.
 
-### US-009 · First published cost-quality frontier `todo`
+### US-009 · First published cost-quality frontier `blocked`
 
 As a user, I want to see a real cost-quality curve, so that I can judge the
 project on evidence.
 
 **Done when** the frontier is published with all four evaluation controls in
 place and the data is reproducible from a committed config.
+
+> **Not done, and the reason is that producing the data would be dishonest.**
+> The machinery and the publish gate ship; the curve does not, because there is
+> no provider adapter (US-010/US-011) and no credentials to call one. A frontier
+> built on the shipped fake would be a real cost-quality curve of a test double,
+> and publishing it as evidence would be the exact failure this project exists to
+> prevent.
+>
+> What ships in `inferconomy.frontier`: `build_frontier` assembles a curve from
+> measured runs and judged quality, and `Frontier.publish()` raises
+> `UnpublishableFrontier` unless all four controls pass, naming each failing one.
+> A frontier defaults to `published=False` so an assembled one cannot be mistaken
+> for a vetted one. `FrontierConfig` is fingerprinted and a template config is
+> committed at `benchmarks/frontier.json`, so the reproducibility claim is a
+> comparison of two hashes once real data exists.
+>
+> Two things this story turned up and fixed: the reference arm now defaults to the
+> *largest* budget, because savings must be measured against the arm that was
+> given the most compute — defaulting to the smallest made the project's own
+> cost-matched-baseline control unsatisfiable. And an oracle bound computed from a
+> different baseline is now rejected, because dividing a saving by a bound taken
+> against another reference arm is a ratio of two unrelated numbers.
+>
+> Remaining to finish this story: US-010 and US-011, then a real run against a real
+> judge, then publication.
 
 ---
 

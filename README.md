@@ -160,6 +160,7 @@ number we report.
 | `inferconomy.costs` | Versioned price table, loadable from bundled JSON or an operator's file |
 | `inferconomy.benchmark` | Fixed-budget baseline runs, reproducible from a config file, plus the oracle bound |
 | `inferconomy.judge` | `Judge` protocol, the null condition, and per-benchmark judge noise |
+| `inferconomy.frontier` | Cost-quality curve assembly, and the gate that decides whether one may be published |
 
 ### Design principles
 
@@ -284,6 +285,25 @@ honest, and we consider a result without them unusable:
    transfer to summarization, extraction, or open-ended explanation. Results are
    reported per category, never aggregated into a single favourable number.
 
+`inferconomy.frontier` enforces all four as a publication gate rather than a
+promise. `Frontier.publish()` raises `UnpublishableFrontier` unless every control
+passes, naming each one that did not, and a frontier starts out `published=False`
+so an assembled curve cannot be passed off as a vetted one. Two of the checks are
+numeric because they can be faked by accident:
+
+- **The cost-matched check compares token counts,** and fails if any point used
+  more tokens than the reference arm. The reference arm defaults to the
+  *largest* budget for exactly this reason: a saving has to be measured against
+  the arm that was given the most compute, and on a budget sweep the cheapest arm
+  is by definition the one holding the fewest tokens.
+- **The judging check requires a passed null and a measured noise floor,** and
+  fails if the judge was a proxy. It also refuses an oracle bound computed
+  against a different baseline than the curve's, since dividing a saving by a
+  bound taken from another reference arm is a ratio of two unrelated numbers.
+- **A quality delta inside the noise floor is not a finding.** The point stays on
+  the curve, because hiding it would misreport the shape, but it is marked
+  `resolvable=False` and the frontier reports which points those were.
+
 Benchmark coverage spans factual QA, extraction, classification, translation,
 summarization, explanation, comparison, mathematical reasoning, coding,
 debugging, planning, analysis, and structured generation.
@@ -313,7 +333,8 @@ built on unmeasured assumptions.
 - [ ] `DecisionEngine` and `Policy` protocols
 - [ ] `direct` and `reason` strategies
 - [ ] Sufficiency detection and escalation loop
-- [ ] First published cost-quality frontier on one benchmark
+- [ ] First published cost-quality frontier on one benchmark *(harness and publish
+      gate shipped; needs US-010/US-011 before any real data exists)*
 
 ### Phase 2 — Adaptation and breadth
 
@@ -634,6 +655,55 @@ print(noise.min_detectable_delta)  # smallest delta worth claiming
   implied. For cost the good direction is negative and for quality it is positive,
   and a metric whose good direction depends on the quantity is one that will be
   quoted backwards.
+
+---
+
+### 2026-09-26 — US-009, frontier assembly and the publication gate *(partial)*
+
+`inferconomy.frontier` builds a cost-quality curve from measured runs and judged
+quality, and refuses to publish one that is missing evidence. 466 tests, 100%
+coverage. **The curve itself is not published yet — see below.**
+
+```python
+from inferconomy.frontier import FrontierConfig, build_frontier
+
+config = FrontierConfig.from_file("benchmarks/frontier.json")
+frontier = build_frontier(config, runs, quality, oracle=oracle, null=null, noise=noise)
+payload = frontier.publish()  # raises UnpublishableFrontier if a control failed
+```
+
+- **`publish()` raises rather than warning.** A frontier missing its oracle, its
+  null condition, or a cost-matched baseline is not a weak result, it is an
+  unusable one, so the error names every failing control and tells the caller
+  which check to go and satisfy.
+- **A frontier starts `published=False`**, and only `publish()` sets it, so an
+  assembled curve cannot be mistaken for a vetted one by inspecting the object.
+- **The reference arm defaults to the largest budget.** This was a bug the tests
+  found. Savings have to be measured against the arm given the most compute; on a
+  budget sweep the cheapest arm holds the fewest tokens by construction, so
+  defaulting to the smallest made this project's own cost-matched-baseline
+  control impossible to satisfy.
+- **An oracle bound from a different baseline is rejected.** The original code
+  divided a saving measured against one arm by a bound computed from another and
+  called the result a captured fraction. That is a ratio of two unrelated numbers,
+  so a mismatch now fails the oracle control and yields no fraction at all.
+- **The token comparison is numeric, not a claim.** A point that used more tokens
+  than the reference arm fails the control, with a 5% tolerance for the difference
+  between two runs of the same budget.
+- **A delta inside the noise floor is reported, not claimed.** Such a point keeps
+  its place on the curve — removing it would misreport the shape — but is marked
+  `resolvable=False`, and `Frontier.unresolvable()` lists them.
+- **The controls travel in the payload,** with a reason string each, so a reader
+  of a results file meets the objections alongside the curve.
+
+**What is not done, and why.** The published curve needs real data, and there is
+none: there is no provider adapter yet (US-010, US-011) and no credentials to call
+one. A frontier built on the shipped fake would be a real cost-quality curve of a
+test double, and publishing it as evidence would be precisely the failure this
+project exists to prevent. The committed `benchmarks/frontier.json` is a template
+with placeholder model and judge, fingerprinted so the reproducibility claim
+becomes a comparison of two hashes once a real run exists. The backlog records
+this story as `blocked` rather than done.
 
 ---
 

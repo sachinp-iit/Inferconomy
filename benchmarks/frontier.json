@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "budgets": [16, 64, 256],
+  "baseline_budget": 256,
+  "categories": [
+    "code",
+    "debugging",
+    "mathematical_reasoning",
+    "summarization",
+    "extraction"
+  ],
+  "judge_name": "REPLACE-WITH-YOUR-JUDGE",
+  "model": "REPLACE-WITH-YOUR-MODEL",
+  "price_file": null,
+  "repetitions": 5
+}

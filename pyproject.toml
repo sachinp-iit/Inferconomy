@@ -55,7 +55,7 @@ path = "src/inferconomy/__init__.py"
 packages = ["src/inferconomy"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "tests", "README.md", "LICENSE", "NOTICE"]
+include = ["src", "tests", "benchmarks", "README.md", "LICENSE", "NOTICE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -64,6 +64,9 @@ addopts = "-q --strict-markers"
 [tool.ruff]
 line-length = 88
 src = ["src", "tests"]
+# Formatter adds a trailing comma that JSON does not allow, so a committed config
+# parsed as data would stop parsing if a formatter touched it.
+extend-exclude = ["benchmarks"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
