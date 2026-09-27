@@ -299,7 +299,7 @@ built on unmeasured assumptions.
 - [x] `pyproject.toml`, package skeleton, installable and importable
 - [x] Core request / response contracts, typed and serializable
 - [x] `Client` protocol and deterministic fake, suite runs fully offline
-- [ ] Token and cost telemetry with exact-vs-estimated accounting
+- [x] Token and cost telemetry with exact-vs-estimated accounting
 - [ ] Fixed-budget baseline harness
 - [ ] Oracle budgeter as an upper bound
 - [ ] Null condition and calibrated judge harness
