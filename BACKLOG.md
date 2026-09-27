@@ -83,13 +83,22 @@ carries a `fingerprint` hash of its canonical form, `run_baseline` emits a
 aggregation offered. Rows carry `usage_basis`, `citable`, zero decision overhead,
 `escalated=False`, and `quality=None` until a judge exists.
 
-### US-007 · Oracle budgeter `todo`
+### US-007 · Oracle budgeter `done`
 
 As a researcher, I want to know how much *perfect* allocation would have saved,
 so that I can tell a good result from a mediocre one.
 
 **Done when** the oracle reports an upper bound on achievable savings and is
 clearly labelled as unattainable in practice.
+
+> Shipped as `inferconomy.benchmark.compute_oracle`. Takes the baseline plus every
+> other budget, picks the cheapest cost per task, and reports the difference as
+> `max_savings_usd`/`max_savings_fraction`. Three things make it un-misreadable:
+> `attainable` is a property that always returns False, so a deserialized result
+> cannot arrive claiming otherwise; `ORACLE_CAVEATS` travels inside the serialized
+> payload; and a bound built on estimated costs reports `citable=False`. The
+> baseline is its own candidate, so savings are never negative. Runs must share
+> tasks, strategy, and price table, or the comparison is refused.
 
 ### US-008 · Null condition and calibrated judge `todo`
 

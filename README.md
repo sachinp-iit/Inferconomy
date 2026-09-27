@@ -158,7 +158,7 @@ number we report.
 | `inferconomy.telemetry` | Token, cost, and latency accounting |
 | `inferconomy.tokens` | Pluggable `TokenEstimator` for providers that do not report usage |
 | `inferconomy.costs` | Versioned price table, loadable from bundled JSON or an operator's file |
-| `inferconomy.benchmark` | Fixed-budget baseline runs, reproducible from a config file |
+| `inferconomy.benchmark` | Fixed-budget baseline runs, reproducible from a config file, plus the oracle bound |
 
 ### Design principles
 
@@ -302,7 +302,7 @@ built on unmeasured assumptions.
 - [x] `Client` protocol and deterministic fake, suite runs fully offline
 - [x] Token and cost telemetry with exact-vs-estimated accounting
 - [x] Fixed-budget baseline harness
-- [ ] Oracle budgeter as an upper bound
+- [x] Oracle budgeter as an upper bound
 - [ ] Null condition and calibrated judge harness
 
 ### Phase 1 — One working path
@@ -536,6 +536,51 @@ metric row. 287 tests, 100% coverage.
   verified — so "reported usage, unverified rate" stays visible as exactly that.
 - **A provider error aborts the run.** A partial run that looks complete is worse
   than a crash, because a crash cannot be mistaken for a result.
+
+---
+
+### 2026-09-26 — US-007, oracle budgeter
+
+`compute_oracle` turns a baseline plus every other budget into an upper bound on
+what perfect per-task allocation would have saved. 328 tests, 100% coverage.
+
+```python
+from inferconomy.benchmark import compute_oracle
+
+result = compute_oracle([baseline_run, low_budget_run, high_budget_run])
+print(result.max_savings_fraction)  # the bound
+print(result.attainable)  # always False
+print(result.citable)  # False if any cost was estimated
+```
+
+- **The bound is per task, not a single budget.** For each task the oracle takes
+  the cheapest cost it observed and reports the difference. This is the whole
+  point: a real allocator would give easy tasks a small budget and hard ones a
+  large one, and only a per-task comparison can bound that.
+- **`attainable` is a property that always returns `False`,** not a stored field.
+  Someone editing a results file to claim the bound was achieved still gets
+  `False` back, so the label cannot be laundered through serialization.
+- **The caveats travel inside the payload.** `ORACLE_CAVEATS` is serialised
+  alongside the number, because a caveat living only in a docstring is a caveat
+  nobody reads once the result has been passed around as JSON.
+- **The dominant caveat is that quality is assumed, not measured.** No judge
+  exists yet, so the oracle can say how much better allocation might have saved
+  and cannot say whether the answer would still have been right. A real judge may
+  find the cheapest run for a task is not the best one. The bound is only
+  meaningful once that assumption is replaced.
+- **The baseline is its own candidate,** so a task whose baseline was already its
+  cheapest reports zero saving rather than a negative one. The bound cannot dip
+  below zero, and `max_savings_fraction` is capped at 1.0.
+- **Estimated costs produce a bound that is not citable.** The saving is still
+  reported — it is the best estimate available — but `citable` is `False`, since a
+  bound built on estimates is an estimate of an estimate.
+- **Uncomparable tasks are excluded and counted,** never priced at zero. A bound
+  computed while quietly dropping tasks is not a bound, so `incomparable_rows` is
+  reported and blocks citability.
+- **Runs must share tasks, strategy, and price table,** or the comparison is
+  refused. Two price tables would make the difference measure the tables, and
+  comparing two strategies reports the strategy gap as though it were a budget
+  gap.
 
 ---
 

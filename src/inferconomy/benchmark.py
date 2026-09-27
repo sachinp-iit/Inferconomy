@@ -24,6 +24,9 @@ like evidence while being a weighted average of whatever the mix happened to be.
 Quality is not part of this story. Every row carries ``quality=None`` rather
 than a placeholder score, so a row cannot be read as "passed" before a judge
 exists to say so.
+
+:func:`compute_oracle` builds the upper bound on what any adaptive policy could
+have saved, using the same runs.
 """
 
 from __future__ import annotations
@@ -39,11 +42,16 @@ from inferconomy.contracts import Request, UsageBasis, decode_enum
 from inferconomy.costs import CostTableError, PriceTable, load_price_table
 
 __all__ = [
+    "ORACLE_CAVEATS",
     "BaselineConfig",
     "CategorySummary",
     "MetricRow",
+    "OracleCategorySummary",
+    "OracleResult",
+    "OracleRow",
     "RunResult",
     "Task",
+    "compute_oracle",
     "run_baseline",
 ]
 
@@ -485,3 +493,339 @@ async def run_baseline(
         price_table_verified=all(price.verified for price in prices.models.values()),
         rows=tuple(rows),
     )
+
+
+ORACLE_CAVEATS = (
+    "Assumes task quality is preserved at every budget. No judge exists yet, so "
+    "this assumption is unverified, and a real judge may find that the cheapest "
+    "run for a task is not the best one.",
+    "Assumes a per-task budget chosen with perfect foresight of every run's "
+    "outcome. No deployed policy can see all runs before choosing a budget for "
+    "the next request.",
+    "A bound on savings is only as exact as the costs inside it. If the underlying "
+    "usage figures are estimated, or the price table is unverified, this is an "
+    "estimate of an estimate.",
+)
+"""The reasons this number cannot be achieved, carried inside the data.
+
+A caveat that lives only in a docstring is a caveat nobody reads once the result
+has been serialized into a results file and passed around. These travel with the
+result so that anyone reading the JSON later meets the objections at the same
+time as the number.
+"""
+
+
+@dataclass(frozen=True)
+class OracleRow:
+    """What perfect allocation would have saved on one task."""
+
+    task_id: str
+    category: str
+    repetition: int
+    baseline_budget: int
+    baseline_cost_usd: float
+    oracle_cost_usd: float
+    """Cheapest observed cost for this task, across every run including the
+    baseline. Including the baseline guarantees this is never above it, so the
+    resulting saving is a bound rather than a wild extrapolation."""
+
+    chosen_budget: int
+    """Budget the oracle would have allocated. Ties resolve to the smaller
+    budget, so the choice is deterministic."""
+
+    runs_considered: int
+    savings_usd: float
+    savings_fraction: float
+    comparable: bool = True
+    """False when this task had no cost in some run, so no honest comparison was
+    possible. Excluded from the totals rather than silently scored as zero."""
+
+    citable: bool = True
+    """False when the costs underneath were estimated or unpriced. A saving
+    computed from numbers nobody can vouch for is not a citable saving."""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "category": self.category,
+            "repetition": self.repetition,
+            "baseline_budget": self.baseline_budget,
+            "baseline_cost_usd": self.baseline_cost_usd,
+            "oracle_cost_usd": self.oracle_cost_usd,
+            "chosen_budget": self.chosen_budget,
+            "runs_considered": self.runs_considered,
+            "savings_usd": self.savings_usd,
+            "savings_fraction": self.savings_fraction,
+            "comparable": self.comparable,
+            "citable": self.citable,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> OracleRow:
+        try:
+            return cls(
+                task_id=str(data["task_id"]),
+                category=str(data["category"]),
+                repetition=int(data.get("repetition", 0)),
+                baseline_budget=int(data["baseline_budget"]),
+                baseline_cost_usd=float(data["baseline_cost_usd"]),
+                oracle_cost_usd=float(data["oracle_cost_usd"]),
+                chosen_budget=int(data["chosen_budget"]),
+                runs_considered=int(data.get("runs_considered", 0)),
+                savings_usd=float(data.get("savings_usd", 0.0)),
+                savings_fraction=float(data.get("savings_fraction", 0.0)),
+                comparable=bool(data.get("comparable", True)),
+                citable=bool(data.get("citable", True)),
+            )
+        except KeyError as exc:
+            raise ValueError(
+                f"Oracle row is missing required field: {exc.args[0]!r}"
+            ) from exc
+
+
+@dataclass(frozen=True)
+class OracleCategorySummary:
+    """Bounds for one category. Never merged with another category."""
+
+    category: str
+    tasks: int
+    mean_savings_usd: float
+    mean_savings_fraction: float
+    citable_tasks: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "category": self.category,
+            "tasks": self.tasks,
+            "mean_savings_usd": self.mean_savings_usd,
+            "mean_savings_fraction": self.mean_savings_fraction,
+            "citable_tasks": self.citable_tasks,
+        }
+
+
+@dataclass(frozen=True)
+class OracleResult:
+    """The upper bound on achievable savings, and its own refutations.
+
+    Read :attr:`caveats` before :attr:`max_savings_fraction`. That number is the
+    point of the comparison and the reason it must not be believed.
+    """
+
+    baseline_fingerprint: str
+    baseline_budget: int
+    price_table_version: str
+    rows: tuple[OracleRow, ...] = field(default_factory=tuple)
+    caveats: tuple[str, ...] = ORACLE_CAVEATS
+    incomparable_rows: int = 0
+    """Tasks that could not be compared and are therefore missing from the totals.
+    A bound computed while quietly dropping tasks is not a bound."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "rows", tuple(self.rows))
+        object.__setattr__(self, "caveats", tuple(self.caveats))
+
+    @property
+    def comparable_rows(self) -> tuple[OracleRow, ...]:
+        return tuple(row for row in self.rows if row.comparable)
+
+    @property
+    def attainable(self) -> bool:
+        """Always False.
+
+        A property rather than a stored field, so a result deserialized from a
+        file cannot arrive carrying a claim of attainability.
+        """
+        return False
+
+    @property
+    def baseline_cost_usd(self) -> float:
+        return sum(row.baseline_cost_usd for row in self.comparable_rows)
+
+    @property
+    def oracle_cost_usd(self) -> float:
+        return sum(row.oracle_cost_usd for row in self.comparable_rows)
+
+    @property
+    def max_savings_usd(self) -> float:
+        return self.baseline_cost_usd - self.oracle_cost_usd
+
+    @property
+    def max_savings_fraction(self) -> float:
+        """Bound as a fraction of baseline cost, never above 1.0."""
+        baseline = self.baseline_cost_usd
+        if baseline <= 0:
+            return 0.0
+        return min(1.0, self.max_savings_usd / baseline)
+
+    @property
+    def citable(self) -> bool:
+        """True only if every row is both comparable and citable.
+
+        Completeness and trustworthiness are separate requirements: a complete
+        comparison built on estimated costs is still not a citable claim.
+        """
+        return (
+            bool(self.rows)
+            and self.incomparable_rows == 0
+            and all(row.comparable and row.citable for row in self.rows)
+        )
+
+    def by_category(self) -> tuple[OracleCategorySummary, ...]:
+        """Per-category bounds, on the same terms as :meth:`RunResult.by_category`."""
+        grouped: dict[str, list[OracleRow]] = {}
+        for row in self.comparable_rows:
+            grouped.setdefault(row.category, []).append(row)
+        summaries = []
+        for category in sorted(grouped):
+            rows = grouped[category]
+            summaries.append(
+                OracleCategorySummary(
+                    category=category,
+                    tasks=len(rows),
+                    mean_savings_usd=sum(row.savings_usd for row in rows) / len(rows),
+                    mean_savings_fraction=(
+                        sum(row.savings_fraction for row in rows) / len(rows)
+                    ),
+                    citable_tasks=sum(1 for row in rows if row.citable),
+                )
+            )
+        return tuple(summaries)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "baseline_fingerprint": self.baseline_fingerprint,
+            "baseline_budget": self.baseline_budget,
+            "price_table_version": self.price_table_version,
+            "attainable": self.attainable,
+            "citable": self.citable,
+            "baseline_cost_usd": self.baseline_cost_usd,
+            "oracle_cost_usd": self.oracle_cost_usd,
+            "max_savings_usd": self.max_savings_usd,
+            "max_savings_fraction": self.max_savings_fraction,
+            "incomparable_rows": self.incomparable_rows,
+            "caveats": list(self.caveats),
+            "rows": [row.to_dict() for row in self.rows],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> OracleResult:
+        try:
+            return cls(
+                baseline_fingerprint=str(data["baseline_fingerprint"]),
+                baseline_budget=int(data["baseline_budget"]),
+                price_table_version=str(data.get("price_table_version", "")),
+                rows=tuple(OracleRow.from_dict(row) for row in data.get("rows", ())),
+                incomparable_rows=int(data.get("incomparable_rows", 0)),
+            )
+        except KeyError as exc:
+            raise ValueError(
+                f"Oracle result is missing required field: {exc.args[0]!r}"
+            ) from exc
+
+
+def _row_key(row: MetricRow) -> tuple[str, int]:
+    return (row.task_id, row.repetition)
+
+
+def compute_oracle(
+    runs: Sequence[RunResult], baseline: RunResult | None = None
+) -> OracleResult:
+    """Upper bound on savings from perfect per-task budget allocation.
+
+    Supply the baseline run plus every run at another budget. For each task the
+    oracle takes the cheapest observed cost and calls the difference a saving.
+
+    The result is a bound, not a target, and the reasons why travel with it in
+    :data:`ORACLE_CAVEATS`. The dominant one is that quality is assumed rather
+    than measured, because no judge exists yet, which means this function can say
+    how much money better allocation might have saved and cannot say whether the
+    answer would still have been right.
+
+    The baseline is included among the candidates, so a task whose baseline was
+    already its cheapest reports zero saving rather than a negative one.
+
+    Raises :class:`ValueError` when the runs are not comparable: different tasks,
+    different strategies, or different price tables. Comparing costs computed
+    with two price tables measures the tables rather than the allocator, and
+    comparing two strategies against each other reports the strategy gap as though
+    it were a budget gap.
+    """
+    if len(runs) < 2:
+        raise ValueError(
+            "An oracle needs a baseline and at least one other budget. A single run "
+            "has nothing to be better than."
+        )
+    base = baseline if baseline is not None else runs[0]
+    others = [run for run in runs if run is not base]
+    _require_comparable(base, others)
+    candidates = [base, *others]
+
+    rows: list[OracleRow] = []
+    for task_id, repetition in sorted(_row_key(row) for row in base.rows):
+        observed = [
+            row
+            for run in candidates
+            for row in run.rows
+            if _row_key(row) == (task_id, repetition)
+        ]
+        reference = next(
+            row for row in base.rows if _row_key(row) == (task_id, repetition)
+        )
+        priced = [row for row in observed if row.cost_usd is not None]
+        cheapest = min(
+            priced, key=lambda row: (row.cost_usd or 0.0, row.budget), default=None
+        )
+
+        baseline_cost = reference.cost_usd or 0.0
+        oracle_cost = baseline_cost
+        if cheapest is not None:
+            oracle_cost = min(baseline_cost, cheapest.cost_usd or 0.0)
+        savings = baseline_cost - oracle_cost
+        rows.append(
+            OracleRow(
+                task_id=task_id,
+                category=reference.category,
+                repetition=repetition,
+                baseline_budget=base.budget,
+                baseline_cost_usd=baseline_cost,
+                oracle_cost_usd=oracle_cost,
+                chosen_budget=cheapest.budget if cheapest is not None else base.budget,
+                runs_considered=len(observed),
+                savings_usd=savings,
+                savings_fraction=0.0 if baseline_cost <= 0 else savings / baseline_cost,
+                comparable=len(priced) == len(observed),
+                citable=all(row.citable for row in observed),
+            )
+        )
+
+    return OracleResult(
+        baseline_fingerprint=base.config_fingerprint,
+        baseline_budget=base.budget,
+        price_table_version=base.price_table_version,
+        rows=tuple(rows),
+        incomparable_rows=sum(1 for row in rows if not row.comparable),
+    )
+
+
+def _require_comparable(base: RunResult, others: Sequence[RunResult]) -> None:
+    keys = {_row_key(row) for row in base.rows}
+    for run in others:
+        if {_row_key(row) for row in run.rows} != keys:
+            raise ValueError(
+                f"Run at budget {run.budget} evaluated a different set of tasks than "
+                f"the baseline at budget {base.budget}. An oracle can only compare "
+                f"runs that answered the same questions."
+            )
+        if run.strategy != base.strategy:
+            raise ValueError(
+                f"Run at budget {run.budget} used strategy {run.strategy!r} but the "
+                f"baseline used {base.strategy!r}. That difference is not a budget "
+                f"difference; vary one thing at a time."
+            )
+        if run.price_table_version != base.price_table_version:
+            raise ValueError(
+                f"Run at budget {run.budget} was priced with table "
+                f"{run.price_table_version!r} but the baseline used "
+                f"{base.price_table_version!r}. Comparing costs from two price "
+                f"tables measures the tables, not the allocator."
+            )
