@@ -15,6 +15,7 @@ from dataclasses import replace
 
 from inferconomy.client import CompletionOptions
 from inferconomy.contracts import Capability, Request, Response, Usage
+from inferconomy.judge import JudgeBasis, JudgeRequest, JudgeScore
 from inferconomy.tokens import (
     DEFAULT_CHARS_PER_TOKEN,
     HeuristicTokenEstimator,
@@ -23,6 +24,7 @@ from inferconomy.tokens import (
 
 __all__ = [
     "FakeClient",
+    "FunctionJudge",
     "ResponseFactory",
     "echo_response",
     "estimate_tokens",
@@ -194,3 +196,56 @@ def scripted(
 def user_request(text: str) -> Request:
     """Convenience: a single-turn user request."""
     return Request.from_text(text)
+
+
+class FunctionJudge:
+    """A judge built from a plain function.
+
+    The counterpart to :class:`FakeClient`, and shipped for the same reason: a
+    user with their own evaluation harness needs to exercise Inferconomy's noise
+    and null-condition machinery without paying for a model judge, and a user
+    without one needs somewhere obvious to put theirs.
+
+    :attr:`deterministic` defaults to True because a function judge normally is
+    deterministic. Set it to False when wrapping something that is not, so the
+    null condition reports order stability rather than asserting it.
+    """
+
+    def __init__(
+        self,
+        fn: Callable[[JudgeRequest], float | JudgeScore],
+        *,
+        name: str = "function-judge",
+        basis: JudgeBasis = JudgeBasis.HEURISTIC,
+        deterministic: bool = True,
+    ) -> None:
+        self._fn = fn
+        self._name = name
+        self._basis = basis
+        self._deterministic = deterministic
+        self.call_count = 0
+        self.order_seen: list[str] = []
+        """Task ids in the order they were asked. Lets a caller confirm that a
+        harness judged sequentially, which the order-invariance check assumes."""
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def deterministic(self) -> bool:
+        return self._deterministic
+
+    async def score(self, request: JudgeRequest) -> JudgeScore:
+        self.call_count += 1
+        self.order_seen.append(request.task_id)
+        outcome = self._fn(request)
+        if isinstance(outcome, JudgeScore):
+            return outcome
+        return JudgeScore(score=outcome, basis=self._basis)
+
+    def __repr__(self) -> str:
+        return (
+            f"FunctionJudge(name={self._name!r}, basis={self._basis.value}, "
+            f"deterministic={self._deterministic}, calls={self.call_count})"
+        )

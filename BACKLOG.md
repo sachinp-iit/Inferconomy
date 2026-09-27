@@ -100,13 +100,24 @@ clearly labelled as unattainable in practice.
 > baseline is its own candidate, so savings are never negative. Runs must share
 > tasks, strategy, and price table, or the comparison is refused.
 
-### US-008 · Null condition and calibrated judge `todo`
+### US-008 · Null condition and calibrated judge `done`
 
 As a researcher, I want judge noise measured and a provably-null configuration
 included, so that reported quality deltas are not artifacts of judging.
 
 **Done when** the null configuration measures as a difference of zero and judge
 noise is quantified per benchmark.
+
+> Shipped as `inferconomy.judge`. `null_condition` separates two checks that are
+> usually conflated: a score set compared against *itself*, which is zero by
+> arithmetic and so can only mean the harness is broken, and the same items judged
+> in reverse order, which is not guaranteed and measures positional stability. Only
+> the first is asserted. `judge_noise` reports `mean_stdev`, `max_range`,
+> `unanimous_fraction`, and `position_bias` per category, and
+> `min_detectable_delta` is the largest of those as a floor on claimable deltas.
+> Scores outside `[0, 1]` and non-finite scores are rejected at the boundary rather
+> than averaged, `PROXY` bases make a report `citable=False`, and aggregation is
+> canonical so input order cannot move the answer.
 
 ### US-009 · First published cost-quality frontier `todo`
 

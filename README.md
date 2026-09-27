@@ -159,6 +159,7 @@ number we report.
 | `inferconomy.tokens` | Pluggable `TokenEstimator` for providers that do not report usage |
 | `inferconomy.costs` | Versioned price table, loadable from bundled JSON or an operator's file |
 | `inferconomy.benchmark` | Fixed-budget baseline runs, reproducible from a config file, plus the oracle bound |
+| `inferconomy.judge` | `Judge` protocol, the null condition, and per-benchmark judge noise |
 
 ### Design principles
 
@@ -303,7 +304,7 @@ built on unmeasured assumptions.
 - [x] Token and cost telemetry with exact-vs-estimated accounting
 - [x] Fixed-budget baseline harness
 - [x] Oracle budgeter as an upper bound
-- [ ] Null condition and calibrated judge harness
+- [x] Null condition and calibrated judge harness
 
 ### Phase 1 — One working path
 
@@ -581,6 +582,58 @@ print(result.citable)  # False if any cost was estimated
   refused. Two price tables would make the difference measure the tables, and
   comparing two strategies reports the strategy gap as though it were a budget
   gap.
+
+---
+
+### 2026-09-26 — US-008, null condition and calibrated judge
+
+`inferconomy.judge` defines the `Judge` protocol, proves the evaluation harness is
+sound, and measures how much a judge wobbles. 395 tests, 100% coverage.
+
+```python
+from inferconomy.judge import JudgeRequest, judge_noise, null_condition
+
+items = [JudgeRequest(task_id="t1", category="code", prompt="...", response="...")]
+
+null = await null_condition(my_judge, items)
+assert null.passed  # the provable zero held
+noise = await judge_noise(my_judge, items, repeats=3)
+print(noise.min_detectable_delta)  # smallest delta worth claiming
+```
+
+- **A null is only provable when both arms are the same object.** The first check
+  compares a score set against itself, which is zero by arithmetic identity no
+  matter how noisy the judge is. A nonzero result can only mean this library is
+  miscounting, so it is a hard assertion. Anything else is only *empirically*
+  zero, and the size of its failure is noise rather than a defect — so it is
+  reported, not asserted.
+- **The second check asks whether the judge depends on batch position.** Judging
+  the same items in reverse and comparing is not trivially zero, so it measures
+  something real: a model judge whose verdict moves with where an item sat is
+  broken in a way a single pass would never reveal. It is asserted only when the
+  judge declares itself deterministic, and reported either way.
+- **`min_detectable_delta` is a maximum across categories, not a mean,** so a
+  quiet benchmark cannot hide a noisy one. A frontier reporting a 0.4% quality
+  gain against a 1.2% floor has reported the judge, not the system.
+- **Three different noise measures, because they fail differently.**
+  `mean_stdev` is the typical wobble, `max_range` is the worst single item that a
+  mean would hide, and `unanimous_fraction` is the difference between an
+  instrument and a coin.
+- **Scores outside `[0, 1]`, `NaN`, and infinities are rejected at the boundary**
+  rather than averaged. A judge returning `1.5` is broken, and averaging hides
+  that instead of surfacing it.
+- **A `PROXY` basis makes the report `citable=False`.** Output length is
+  correlated with quality rather than measuring it, and a pipeline mixing a model
+  judge with a length proxy has not measured quality at all.
+- **Aggregation is canonical, so input order cannot move the answer.** Summation
+  order changes the last bits of a float mean; a harness whose output depends on
+  arrival order would be reporting its own noise.
+- **Judging runs sequentially on purpose,** since the order check assumes the only
+  thing varying between passes is the order.
+- **Deltas are `later - earlier`,** and the direction is stated rather than
+  implied. For cost the good direction is negative and for quality it is positive,
+  and a metric whose good direction depends on the quantity is one that will be
+  quoted backwards.
 
 ---
 
