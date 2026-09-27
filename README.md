@@ -197,6 +197,33 @@ than exact cost are marked as such in the report. A model with no reasoning
 control and no inspectable trace offers a policy very little to work with, and we
 would rather say so in the report than imply a saving we did not achieve.
 
+```python
+report = await probe_capabilities(client)  # one tiny call, per model
+options = report.adapt(CompletionOptions(effort="high", reasoning_budget=4096))
+# -> effort and reasoning_budget are gone, each with a recorded reason
+```
+
+`inferconomy.capabilities` reports **three** outcomes per capability, not two:
+
+| Outcome | Meaning |
+|---|---|
+| `supported` | Confirmed by a positive observation. |
+| `unsupported` | Confirmed by a *definitive* answer from the endpoint. |
+| `unknown` | Not established. The lever may well work. |
+
+The third value is the point. A capability can usually be *confirmed* by a
+positive observation but rarely *refuted* by a null one: a model asked a trivial
+question may emit no reasoning trace on a model that reasons perfectly well.
+Reading that as "unsupported" would attribute a fact about the model to a
+limitation of our probe, then select a fallback as though it were established. An
+unconfirmed lever is therefore **not pulled**, and the run records the
+degradation and its reason, because a call whose effect cannot be attributed is
+indistinguishable from one where the lever worked.
+
+An adapter that cannot test a capability reports `unknown` rather than guessing,
+and a claim the probe does not confirm is surfaced as a disagreement instead of
+being quietly overwritten.
+
 Planned adapters: OpenAI-compatible (which also covers OpenRouter, Groq, Together,
 Fireworks, DeepSeek, Mistral, and local vLLM / Ollama servers), Anthropic, and
 Google. Anthropic and Google are next, not done.
@@ -328,13 +355,14 @@ built on unmeasured assumptions.
 
 ### Phase 1 — One working path
 
-- [ ] Capability probe
+- [x] Capability probe
 - [ ] OpenAI-compatible provider adapter
 - [ ] `DecisionEngine` and `Policy` protocols
 - [ ] `direct` and `reason` strategies
 - [ ] Sufficiency detection and escalation loop
-- [ ] First published cost-quality frontier on one benchmark *(harness and publish
-      gate shipped; needs US-010/US-011 before any real data exists)*
+- [ ] First published cost-quality frontier on one benchmark *(harness, publish
+      gate, and capability probe shipped; needs US-011 before any real data
+      exists)*
 
 ### Phase 2 — Adaptation and breadth
 
@@ -606,6 +634,71 @@ print(result.citable)  # False if any cost was estimated
 
 ---
 
+### 2026-09-27 — US-010, capability probe
+
+`inferconomy.capabilities` finds out what a target model actually does instead of
+what an adapter hopes it does. 554 tests, 100% coverage.
+
+```python
+report = await probe_capabilities(client)  # one tiny call, ~16 output tokens
+assert report.supports(Capability.LOGPROBS)  # False unless actually confirmed
+
+adapted = report.adapt(CompletionOptions(effort="high", reasoning_budget=4096))
+for drop in adapted.degradations:
+    print(drop.capability.value, "->", drop.fallback)
+```
+
+- **The outcome is three-valued, and that is the whole design.** A capability can
+  usually be *confirmed* by a positive observation and rarely *refuted* by a null
+  one. A model asked `17 * 23` may emit no reasoning trace on a model that
+  reasons perfectly well, so a missing trace is silence, not refusal. Reporting
+  `unsupported` there would attribute a fact about the model to a limitation of
+  our probe, and then pick a fallback as though it had been established. So
+  `unknown` exists, and it is never quietly downgraded.
+- **Unconfirmed means not pulled.** `adapt()` strips a lever unless it is
+  confirmed, and records what was dropped and why. Sending an unverified lever
+  produces a call whose effect cannot be attributed, and the caller cannot tell
+  that from a lever that worked, so the conservative reading is the only one that
+  keeps a run record truthful. Unknown is treated the same as unsupported here,
+  deliberately.
+- **Every capability has a documented fallback as data, not prose.** The table
+  lives in `FALLBACKS` so a caller can print the reason next to a result, and a
+  test fails if a capability is added without one. A degradation nobody can
+  explain is indistinguishable from a bug.
+- **Absence and declaration are not the same kind of evidence.** `tokens_exact =
+  False` is the adapter *declaring* its counts are estimates, which settles the
+  question and is reported `unsupported`; a null `reasoning_text` is silence and
+  is reported `unknown`. Both look like "nothing in the response", and collapsing
+  them would either overstate a known-degraded cost figure or invent a fact about
+  reasoning.
+- **The three capabilities a response cannot reveal are delegated, not guessed.**
+  Reasoning budget, effort, and logprobs look identical in a successful response
+  whether or not the lever did anything, so they need the adapter to test the
+  endpoint, through an optional `CapabilityProbeProvider`. That method returns
+  `True`/`False`/`None`, where `None` means "no definitive answer". Adapters
+  without it get `unknown`, the honest outcome: the lever was not tested, not
+  shown to be missing. The extension is separate from the `Client` protocol on
+  purpose, so an adapter that cannot answer stays a usable client instead of
+  carrying a method whose honest answer is "I do not know".
+- **Only overclaims count as disagreements.** An adapter claiming a lever the
+  probe could not confirm is a bug, and the dangerous direction, since a policy
+  reading the declaration would pull a dead lever. The reverse, a lever the model
+  has and the adapter never mentioned, is a discovery rather than a conflict, and
+  is on `report.discovered` instead. My first cut reported both directions and
+  produced a disagreement for *every* confirmed capability on any adapter with a
+  short declaration, which buried the one signal worth having.
+- **Probing costs money and says so.** `report.calls` is in the payload, the
+  prompt is one a reasoning model will actually reason about, and `cache_key`
+  exists so a report gets reused instead of re-probed per request. A failed probe
+  refuses to claim the model that was asked for, since no call reached the
+  endpoint to confirm it.
+- **A probe never raises.** Its job is to describe a degraded environment, so a
+  provider failure becomes an `unknown` with the error text attached. Probing at
+  startup should not be the thing that stops the process. This is load bearing: a
+  malformed test double here surfaced as a tidy report of "nothing supported
+  anywhere" with the `TypeError` sitting in the detail, which is precisely how a
+  real adapter bug would look.
+
 ### 2026-09-26 — US-008, null condition and calibrated judge
 
 `inferconomy.judge` defines the `Judge` protocol, proves the evaluation harness is
@@ -697,7 +790,7 @@ payload = frontier.publish()  # raises UnpublishableFrontier if a control failed
   of a results file meets the objections alongside the curve.
 
 **What is not done, and why.** The published curve needs real data, and there is
-none: there is no provider adapter yet (US-010, US-011) and no credentials to call
+none: there is no provider adapter yet (US-011) and no credentials to call
 one. A frontier built on the shipped fake would be a real cost-quality curve of a
 test double, and publishing it as evidence would be precisely the failure this
 project exists to prevent. The committed `benchmarks/frontier.json` is a template

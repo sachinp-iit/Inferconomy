@@ -156,7 +156,7 @@ place and the data is reproducible from a committed config.
 
 ## Phase 1 — One working path
 
-### US-010 · Capability probe `todo`
+### US-010 · Capability probe `done`
 
 As a developer, I want Inferconomy to detect what my model actually supports, so
 that it uses real levers and does not pretend to.
@@ -164,6 +164,48 @@ that it uses real levers and does not pretend to.
 **Done when** the probe reports reasoning-token control, effort control, visible
 chain-of-thought, logprobs, and usage reporting, with a documented fallback per
 capability.
+
+> Shipped in `inferconomy.capabilities`. All five capabilities are reported, and
+> the outcome is three-valued: `supported`, `unsupported`, `unknown`.
+>
+> The third value is the substance of the story. A capability can usually be
+> *confirmed* by a positive observation and rarely *refuted* by a null one, since
+> a model asked a trivial question may emit no reasoning trace on a model that
+> reasons perfectly well. Reporting "unsupported" there would attribute a fact
+> about the model to a limitation of our probe and then select a fallback as
+> though it had been established, so an unknown is never downgraded.
+>
+> `FALLBACKS` holds the documented consequence per capability as data, and a test
+> fails if a capability is added without one. `report.adapt()` strips any lever
+> that is not confirmed - including unknown ones - and records what was dropped,
+> because a call whose effect cannot be attributed is indistinguishable from one
+> where the lever worked.
+>
+> Reasoning budget, effort, and logprobs look identical in a successful response
+> whether or not the lever did anything, so an optional `CapabilityProbeProvider`
+> extension lets an adapter test them against the endpoint. Adapters that do not
+> implement it get `unknown`, not `unsupported`: untested is not missing. The
+> extension is separate from the `Client` protocol so an adapter that cannot
+> answer stays a usable client.
+>
+> Two design errors the tests caught, both left in the log because the mistake is
+> more instructive than the fix:
+>
+> 1. `disagreements` initially reported *any* divergence between an adapter's
+>    static claim and the observation, which flagged every confirmed capability
+>    an adapter had not bothered to declare. A discovery is not a conflict, and
+>    the noise buried the overclaim that actually matters. Now only overclaims
+>    are disagreements, and discoveries live on `report.discovered`.
+> 2. Absence and declaration are different kinds of evidence. `tokens_exact =
+>    False` is the adapter declaring its counts are estimates, so it settles the
+>    question; a null `reasoning_text` is silence and settles nothing. Both look
+>    like "nothing in the response" in the code, and treating them alike would
+>    either overstate a known-degraded cost figure or invent a fact about
+>    reasoning.
+>
+> A probe never raises: a provider failure becomes an `unknown` with the error
+> text attached, because describing a degraded environment is the job and probing
+> at startup should not stop the process. 554 tests, 100% coverage.
 
 ### US-011 · OpenAI-compatible provider adapter `todo`
 
