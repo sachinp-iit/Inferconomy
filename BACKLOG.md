@@ -266,13 +266,26 @@ endpoints without provider-specific logic leaking upward.
 >
 > Still blocking US-009: credentials for a real run against a real judge.
 
-### US-012 · Decision engine protocol and heuristic adapter `todo`
+### US-012 · Decision engine protocol and heuristic adapter `done`
 
 As a developer, I want a pluggable decision engine, so that task analysis is
 replaceable and testable.
 
 **Done when** the protocol is implemented by a zero-cost heuristic and by a fake
 returning fixed values, with neither requiring network access.
+
+> Shipped as `inferconomy.decision.DecisionEngine` (protocol), `Decision`,
+> `TaskShape`, `HeuristicDecisionEngine`, and `FixedDecisionEngine` in
+> `inferconomy.testing`. The heuristic reads only the final user turn, votes by
+> lexical rules, and refuses to classify when signals disagree: a conflict
+> produces `TaskShape.UNKNOWN` at the conflict uncertainty (less uncertain than
+> "no signal at all", but still not claimed), and unknown carries
+> `budget_hint_tokens=None` (an explicit refusal to have an opinion, distinct
+> from `0` which is a confident claim that reasoning would be wasted). A
+> derived task returns a starter budget that respects the caller's
+> `max_output_tokens` ceiling. All of this is deterministic, has no network, no
+> randomness, and no runtime dependencies. 78 new tests, 100% coverage. The
+> public surface still passes the package tests.
 
 ### US-013 · Policy protocol and reference policy `todo`
 

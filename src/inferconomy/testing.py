@@ -1,10 +1,12 @@
-"""Deterministic test doubles for :class:`~inferconomy.client.Client`.
+"""Deterministic test doubles for the pluggable parts of Inferconomy.
 
-Shipped inside the package rather than confined to the test suite on purpose.
-Anyone integrating Inferconomy needs to test their own code without spending
-tokens or hitting a rate limit, and that need does not stop at our repository.
+Primarily :class:`~inferconomy.client.Client`, and now the analysis behind it
+too. Shipped inside the package rather than confined to the test suite on
+purpose. Anyone integrating Inferconomy needs to test their own code without
+spending tokens or hitting a rate limit, and that need does not stop at our
+repository.
 
-Every response here is deterministic: the same inputs produce the same output on
+Every double here is deterministic: the same inputs produce the same output on
 every run and every machine. No sleeps, no randomness, no clock reads.
 """
 
@@ -15,6 +17,7 @@ from dataclasses import replace
 
 from inferconomy.client import CompletionOptions
 from inferconomy.contracts import Capability, Request, Response, Usage
+from inferconomy.decision import Decision, TaskShape
 from inferconomy.judge import JudgeBasis, JudgeRequest, JudgeScore
 from inferconomy.tokens import (
     DEFAULT_CHARS_PER_TOKEN,
@@ -24,6 +27,7 @@ from inferconomy.tokens import (
 
 __all__ = [
     "FakeClient",
+    "FixedDecisionEngine",
     "FunctionJudge",
     "ResponseFactory",
     "echo_response",
@@ -247,5 +251,80 @@ class FunctionJudge:
     def __repr__(self) -> str:
         return (
             f"FunctionJudge(name={self._name!r}, basis={self._basis.value}, "
+            f"deterministic={self._deterministic}, calls={self.call_count})"
+        )
+
+
+class FixedDecisionEngine:
+    """A :class:`~inferconomy.decision.DecisionEngine` returning one canned decision.
+
+    The counterpart to :class:`FunctionJudge`, and shipped for the same reason: a
+    caller testing their own routing needs to pin the analysis so that the only
+    thing under test is what they do with it. It records what it was asked, so a
+    test can assert both the decision taken and the request it was taken on.
+
+    With no decision supplied it returns one fixed ``unknown`` at full
+    uncertainty, which is the honest statement a double can make: it performed no
+    analysis and claims none. Pass a decision to pin something else.
+
+    It is a fake returning fixed values, so it cannot be mistaken for an engine
+    that measured anything. Its own ``deterministic`` is True; set it to False
+    when wrapping something that is not, so that whatever later asserts on that
+    property reports rather than assumes.
+    """
+
+    def __init__(
+        self,
+        decision: Decision | None = None,
+        *,
+        name: str = "fixed-decision",
+        deterministic: bool = True,
+    ) -> None:
+        self._decision = decision or Decision(
+            shape=TaskShape.UNKNOWN,
+            engine=name,
+            needs_reasoning=False,
+            uncertainty=1.0,
+            budget_hint_tokens=None,
+            reason="fixed test double; no analysis was performed",
+        )
+        self._name = name
+        self._deterministic = deterministic
+        self._calls: list[Request] = []
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def deterministic(self) -> bool:
+        return self._deterministic
+
+    @property
+    def calls(self) -> tuple[Request, ...]:
+        """Every request analysed, in order, for assertions about what was asked."""
+        return tuple(self._calls)
+
+    @property
+    def call_count(self) -> int:
+        return len(self._calls)
+
+    @property
+    def decision(self) -> Decision:
+        """The decision this double always returns."""
+        return self._decision
+
+    def reset(self) -> None:
+        """Forget recorded calls. The pinned decision is kept."""
+        self._calls.clear()
+
+    async def decide(self, request: Request) -> Decision:
+        self._calls.append(request)
+        return self._decision
+
+    def __repr__(self) -> str:
+        return (
+            f"FixedDecisionEngine(name={self._name!r}, shape="
+            f"{self._decision.shape.value}, "
             f"deterministic={self._deterministic}, calls={self.call_count})"
         )
