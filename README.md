@@ -152,7 +152,7 @@ number we report.
 | `inferconomy.capabilities` | Probes what the target model supports |
 | `inferconomy.decision` | `DecisionEngine` protocol + adapters |
 | `inferconomy.strategy` | Strategy catalogue and selection |
-| `inferconomy.policy` | `Policy` protocol — budget allocation, escalation, stopping |
+| `inferconomy.policy` | `Policy` protocol + reference policy |
 | `inferconomy.runtime` | The generate/inspect/continue/stop loop |
 | `inferconomy.providers` | `OpenAICompatibleClient`, the `Transport` seam, and the provider error taxonomy |
 | `inferconomy.telemetry` | Token, cost, and latency accounting |
@@ -420,7 +420,7 @@ built on unmeasured assumptions.
 
 - [x] Capability probe
 - [x] OpenAI-compatible provider adapter
-- [ ] `DecisionEngine` and `Policy` protocols
+- [x] `DecisionEngine` and `Policy` protocols
 - [ ] `direct` and `reason` strategies
 - [ ] Sufficiency detection and escalation loop
 - [ ] First published cost-quality frontier on one benchmark *(harness, publish
