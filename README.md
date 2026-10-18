@@ -461,7 +461,7 @@ useful outcome, and we will publish it as one.
 We publish progress here rather than only in release notes, so the trajectory is
 visible while the design is still open to review. Convention:
 
-- Newest entry first, `YYYY-MM-DD` heading.
+- Oldest entry first, `YYYY-MM-DD` heading.
 - Added in the same pull request as the change it describes.
 - States what works, not what is planned. Plans belong in the roadmap.
 - Honest about regressions. A number that got worse goes in the log, not hidden.
@@ -774,6 +774,63 @@ over-states the cost of a cached prompt. It errs upward instead of losing the
 difference, and doing it properly means a cached-token field on `Usage` plus tiered
 rates in the price table - a change to those contracts, not something to smuggle
 into an adapter.
+
+### 2026-09-27 — US-012, decision engine protocol and heuristic adapter
+
+`inferconomy.decision.DecisionEngine` is now a protocol, so task analysis is
+replaceable and testable without touching the runtime. 78 tests, 100% coverage.
+
+```python
+engine = HeuristicDecisionEngine()  # or FixedDecisionEngine(pinned)
+decision = await engine.decide(request)
+if decision.needs_reasoning:
+    ...
+```
+
+- **A conflict is its own answer, not a failure.** When the lexical rules split
+  evenly the engine returns `TaskShape.UNKNOWN` at the conflict uncertainty -
+  less uncertain than "no signal at all", but still not a claimed shape - and the
+  caller learns which rules fired in `decision.matched`. Collapsing a tie into
+  either side's answer would hide the disagreement that is the most useful thing
+  the engine found.
+- **`budget_hint_tokens` distinguishes `0` from `None`.** `0` is a confident claim
+  that reasoning would be wasted; `None` is a refusal to have an opinion. The
+  difference survives into the policy layer, so a contained task stops for a
+  reason and an unknown task does not stop for the lack of one.
+- **Only the final user turn is read.** A system prompt that says "answer
+  briefly" does not turn a derivation into a lookup, and reading the whole
+  conversation would let an early question redefine a later one. The engine
+  analyses what was asked last.
+- **The engine is deterministic and offline.** No network, no randomness, no clock.
+  The same request produces the same decision on every machine, which is what
+  makes a comparison between two policies attributable to the policy.
+
+### 2026-09-27 — US-013, policy protocol and reference policy
+
+`inferconomy.policy.Policy` makes budget allocation a swappable strategy, with a
+deliberately conservative reference policy as the default and a `FixedPolicy`
+double for tests. 50 tests, 100% coverage.
+
+```python
+policy = ConservativeReferencePolicy()  # or any Policy implementation
+allocation = await policy.allocate(decision, request, capabilities)
+```
+
+- **The reference policy errs on the side of quality.** A derived task starts
+  from the decision's own hint (or a default) clamped to the caller's ceiling; a
+  contained task stops with no budget; an unknown task gets a small non-zero
+  budget rather than assuming reasoning is wasted. The conservative trade-off is
+  that a cheap extra generation is usually cheaper than a wrong cheap one.
+- **Escalation is an increment, not a rewrite.** `additional_budget` is the amount
+  to add if the runtime decides the first attempt was insufficient, offered only
+  for derived tasks, capped at `MAX_ESCALATIONS`, and clamped to the remaining
+  ceiling. The policy never exceeds the ceiling even across repeated escalations.
+- **Every allocation explains itself.** `allocation.reason` names the decision
+  (shape, uncertainty, hint, matched rules) so an auditable trail survives the
+  run. A policy that cannot say why it chose a number cannot be reviewed.
+- **The protocol is replaceable by construction.** `FixedPolicy` satisfies the
+  protocol with a pinned allocation and recorded calls, proving a user-supplied
+  policy fully replaces the reference without a special case in the runtime.
 
 ### 2026-09-27 — US-010, capability probe
 

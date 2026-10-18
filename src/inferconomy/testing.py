@@ -16,9 +16,17 @@ from collections.abc import Callable, Sequence
 from dataclasses import replace
 
 from inferconomy.client import CompletionOptions
-from inferconomy.contracts import Capability, Request, Response, Usage
+from inferconomy.contracts import (
+    Capability,
+    OptimizationReport,
+    Request,
+    Response,
+    StopReason,
+    Usage,
+)
 from inferconomy.decision import Decision, TaskShape
 from inferconomy.judge import JudgeBasis, JudgeRequest, JudgeScore
+from inferconomy.policy import Allocation
 from inferconomy.tokens import (
     DEFAULT_CHARS_PER_TOKEN,
     HeuristicTokenEstimator,
@@ -28,6 +36,7 @@ from inferconomy.tokens import (
 __all__ = [
     "FakeClient",
     "FixedDecisionEngine",
+    "FixedPolicy",
     "FunctionJudge",
     "ResponseFactory",
     "echo_response",
@@ -326,5 +335,94 @@ class FixedDecisionEngine:
         return (
             f"FixedDecisionEngine(name={self._name!r}, shape="
             f"{self._decision.shape.value}, "
+            f"deterministic={self._deterministic}, calls={self.call_count})"
+        )
+
+
+class FixedPolicy:
+    """A :class:`~inferconomy.policy.Policy` returning one pinned allocation.
+
+    The counterpart to :class:`FixedDecisionEngine`, and the reason a user can
+    replace the reference policy without writing a new class first. It records
+    what it was asked, so a test can assert both the allocation taken and the
+    inputs it was taken from.
+
+    With no allocation supplied it returns a fixed ``Allocation`` that admits it
+    performed no analysis: ``initial_budget=0``, ``additional_budget=0``,
+    ``should_stop=True``, and a reason naming the double. Pass an allocation to
+    pin something else.
+    """
+
+    def __init__(
+        self,
+        allocation: Allocation | None = None,
+        *,
+        name: str = "fixed-policy",
+        deterministic: bool = True,
+    ) -> None:
+        if allocation is None:
+            allocation = Allocation(
+                initial_budget=0,
+                additional_budget=0,
+                should_stop=True,
+                stop_reason=StopReason.STRATEGY_COMPLETE,
+                decision=Decision(
+                    shape=TaskShape.UNKNOWN,
+                    engine=name,
+                    needs_reasoning=False,
+                    uncertainty=1.0,
+                    budget_hint_tokens=None,
+                    reason="fixed test double; no analysis was performed",
+                ),
+                reason="fixed test double; no allocation was computed",
+            )
+        self._allocation = allocation
+        self._name = name
+        self._deterministic = deterministic
+        self._calls: list[tuple[Decision, Request]] = []
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def deterministic(self) -> bool:
+        return self._deterministic
+
+    @property
+    def calls(self) -> tuple[tuple[Decision, Request], ...]:
+        """Every ``(decision, request)`` pair analysed, in order."""
+        return tuple(self._calls)
+
+    @property
+    def call_count(self) -> int:
+        return len(self._calls)
+
+    @property
+    def allocation(self) -> Allocation:
+        """The allocation this double always returns."""
+        return self._allocation
+
+    def reset(self) -> None:
+        """Forget recorded calls. The pinned allocation is kept."""
+        self._calls.clear()
+
+    async def allocate(
+        self,
+        decision: Decision,
+        request: Request,
+        capabilities: object | None = None,
+        *,
+        history: Sequence[Response] = (),
+        prior_reports: Sequence[OptimizationReport] = (),
+        escalations_so_far: int = 0,
+    ) -> Allocation:
+        self._calls.append((decision, request))
+        return self._allocation
+
+    def __repr__(self) -> str:
+        return (
+            f"FixedPolicy(name={self._name!r}, initial="
+            f"{self._allocation.initial_budget}, "
             f"deterministic={self._deterministic}, calls={self.call_count})"
         )

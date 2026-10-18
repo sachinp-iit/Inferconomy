@@ -287,13 +287,25 @@ returning fixed values, with neither requiring network access.
 > randomness, and no runtime dependencies. 78 new tests, 100% coverage. The
 > public surface still passes the package tests.
 
-### US-013 · Policy protocol and reference policy `todo`
+### US-013 · Policy protocol and reference policy `done`
 
 As a developer, I want allocation to be a swappable policy, so that the strategy
 is not hardcoded and can be supplied or replaced independently.
 
 **Done when** a documented, deliberately conservative reference policy ships as
 the default, and a user-supplied policy fully replaces it.
+
+> Shipped as `inferconomy.policy.Policy` (protocol), `Allocation`, and
+> `ConservativeReferencePolicy` in `inferconomy.policy`, with a `FixedPolicy`
+> double in `inferconomy.testing`. The reference policy maps `TaskShape.DERIVED`
+> to a starter budget from the decision hint (or a default) clamped to the
+> caller's ceiling, `TaskShape.CONTAINED` to a stop with no budget, and
+> `TaskShape.UNKNOWN` to a small non-zero budget rather than assuming reasoning
+> is wasted. Escalation is offered only for derived tasks, capped at
+> `MAX_ESCALATIONS`, and clamped to the remaining ceiling. Every allocation
+> carries an audit reason. The policy is deterministic and offline. 50 new
+> tests, 100% coverage. The fixed double satisfies the protocol, so a
+> user-supplied policy fully replaces the reference.
 
 ### US-014 · `direct` strategy `todo`
 
