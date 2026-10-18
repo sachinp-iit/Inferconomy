@@ -1,7 +1,8 @@
 """Deterministic test doubles for the pluggable parts of Inferconomy.
 
-Primarily :class:`~inferconomy.client.Client`, and now the analysis behind it
-too. Shipped inside the package rather than confined to the test suite on
+Primarily :class:`~inferconomy.client.Client`, and now the analysis, allocation,
+and execution seams behind it too. Shipped inside the package rather than
+confined to the test suite on
 purpose. Anyone integrating Inferconomy needs to test their own code without
 spending tokens or hitting a rate limit, and that need does not stop at our
 repository.
@@ -15,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 
-from inferconomy.client import CompletionOptions
+from inferconomy.client import Client, CompletionOptions
 from inferconomy.contracts import (
     Capability,
     OptimizationReport,
@@ -27,6 +28,7 @@ from inferconomy.contracts import (
 from inferconomy.decision import Decision, TaskShape
 from inferconomy.judge import JudgeBasis, JudgeRequest, JudgeScore
 from inferconomy.policy import Allocation
+from inferconomy.strategy import StrategyResult
 from inferconomy.tokens import (
     DEFAULT_CHARS_PER_TOKEN,
     HeuristicTokenEstimator,
@@ -37,6 +39,7 @@ __all__ = [
     "FakeClient",
     "FixedDecisionEngine",
     "FixedPolicy",
+    "FixedStrategy",
     "FunctionJudge",
     "ResponseFactory",
     "echo_response",
@@ -424,5 +427,84 @@ class FixedPolicy:
         return (
             f"FixedPolicy(name={self._name!r}, initial="
             f"{self._allocation.initial_budget}, "
+            f"deterministic={self._deterministic}, calls={self.call_count})"
+        )
+
+
+class FixedStrategy:
+    """A :class:`~inferconomy.strategy.Strategy` returning one pinned result.
+
+    The counterpart to :class:`FixedPolicy`, and the reason a user can replace a
+    strategy without writing a new class first. It records what it was asked, so
+    a test can assert both the result returned and the inputs it was returned
+    for.
+
+    With no result supplied it returns an empty response and a report that
+    admits no strategy ran: the audit trail holds only the double's own
+    statement, and ``usage`` is left ``None`` so the report's basis is
+    ``absent``. A double that made no call must not present accounting that
+    could be mistaken for a measurement. Pass a result to pin something else.
+    """
+
+    def __init__(
+        self,
+        result: StrategyResult | None = None,
+        *,
+        name: str = "fixed-strategy",
+        deterministic: bool = True,
+    ) -> None:
+        if result is None:
+            result = StrategyResult(
+                response=Response(text=""),
+                report=OptimizationReport(
+                    strategy=name,
+                    stopped_on=StopReason.STRATEGY_COMPLETE,
+                    decisions=("fixed test double; no strategy was executed",),
+                ),
+            )
+        self._result = result
+        self._name = name
+        self._deterministic = deterministic
+        self._calls: list[tuple[Request, Allocation]] = []
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def deterministic(self) -> bool:
+        return self._deterministic
+
+    @property
+    def result(self) -> StrategyResult:
+        """The result this double always returns."""
+        return self._result
+
+    @property
+    def calls(self) -> tuple[tuple[Request, Allocation], ...]:
+        """Every ``(request, allocation)`` pair executed, in order."""
+        return tuple(self._calls)
+
+    @property
+    def call_count(self) -> int:
+        return len(self._calls)
+
+    def reset(self) -> None:
+        """Forget recorded calls. The pinned result is kept."""
+        self._calls.clear()
+
+    async def execute(
+        self,
+        request: Request,
+        allocation: Allocation,
+        client: Client,
+        capabilities: object | None = None,
+    ) -> StrategyResult:
+        self._calls.append((request, allocation))
+        return self._result
+
+    def __repr__(self) -> str:
+        return (
+            f"FixedStrategy(name={self._name!r}, "
             f"deterministic={self._deterministic}, calls={self.call_count})"
         )

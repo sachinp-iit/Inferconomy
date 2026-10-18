@@ -307,13 +307,29 @@ the default, and a user-supplied policy fully replaces it.
 > tests, 100% coverage. The fixed double satisfies the protocol, so a
 > user-supplied policy fully replaces the reference.
 
-### US-014 · `direct` strategy `todo`
+### US-014 · `direct` strategy `done`
 
 As a user, I want simple requests answered without wasted reasoning, so that I
 pay for the task and not for the worst case.
 
 **Done when** `direct` completes a trivial request well within the baseline cost
 and with no quality loss.
+
+> Shipped as `inferconomy.strategy.DirectStrategy`, with a `Strategy` protocol,
+> a `StrategyResult` pairing each response with its report, and a
+> `select_strategy` selector, plus a `FixedStrategy` double in
+> `inferconomy.testing`. A strategy receives the policy's allocation and the
+> caller's request and makes exactly one call: the allocated budget reaches the
+> wire as `CompletionOptions.max_output_tokens`, no reasoning lever is set, and
+> a zero allocation falls back to the caller's ceiling (or the provider's
+> default when none was set) rather than sending an invalid cap. The report
+> records the decision, the policy's reason, then the strategy's own line in
+> order, always stops on `STRATEGY_COMPLETE`, and claims `USAGE_REPORTING` only
+> when the provider reported exact usage. The protocol is three members wide,
+> the client arrives per call, and the strategy holds no state, so
+> `select_strategy` hands out interchangeable instances. 44 new tests, 100%
+> coverage. The done-when is a mechanism test with fixed fakes, not a published
+> frontier.
 
 ### US-015 · `reason` strategy `todo`
 

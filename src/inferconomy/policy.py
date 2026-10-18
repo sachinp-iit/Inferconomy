@@ -3,7 +3,7 @@
 A policy is the seam that decides *how much to spend* and *when to stop* once the
 analysis is known. It does not pick the strategy, and it does not analyse the
 task. Separating those three - analysis in
-:mod:`inferconomy.decision`, strategy in `inferconomy.strategy` (later), and
+:mod:`inferconomy.decision`, strategy in :mod:`inferconomy.strategy`, and
 allocation here - is what lets them be substituted independently.
 
 Two constraints shape this module:

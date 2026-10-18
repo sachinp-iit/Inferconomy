@@ -421,7 +421,8 @@ built on unmeasured assumptions.
 - [x] Capability probe
 - [x] OpenAI-compatible provider adapter
 - [x] `DecisionEngine` and `Policy` protocols
-- [ ] `direct` and `reason` strategies
+- [x] `direct` strategy
+- [ ] `reason` strategy
 - [ ] Sufficiency detection and escalation loop
 - [ ] First published cost-quality frontier on one benchmark *(harness, publish
       gate, capability probe, and provider adapter all shipped; needs
@@ -831,6 +832,36 @@ allocation = await policy.allocate(decision, request, capabilities)
 - **The protocol is replaceable by construction.** `FixedPolicy` satisfies the
   protocol with a pinned allocation and recorded calls, proving a user-supplied
   policy fully replaces the reference without a special case in the runtime.
+
+### 2026-09-27 — US-014, `direct` strategy
+
+`inferconomy.strategy.DirectStrategy` is the plainest strategy that can be
+correct: one provider call, no reasoning lever, the policy's allocation sent as
+the output cap. `inferconomy.testing.FixedStrategy` makes a user-supplied
+strategy a drop-in replacement. 44 tests, 100% coverage.
+
+```python
+strategy = select_strategy("direct")  # or any Strategy implementation
+result = await strategy.execute(request, allocation, client, capabilities)
+```
+
+- **The budget reaches the wire.** `allocation.initial_budget` becomes
+  `CompletionOptions.max_output_tokens`, so a policy that funds little actually
+  spends little. No model, reasoning budget, or effort is set: which model
+  answers is the adapter's configuration, and the other two are the levers a
+  direct strategy exists not to pull.
+- **A zero allocation does not mean a free call.** `CompletionOptions` refuses a
+  non-positive cap, so a caller's ceiling is applied instead when one was set,
+  and the provider's default when none was; the audit trail says which. What was
+  generated is recorded in `usage`, and only that figure is a cost claim.
+- **A strategy does not re-decide.** The decision engine's analysis and the
+  policy's allocation are recorded in the trail ahead of the strategy's own
+  line, and the strategy always stops on `STRATEGY_COMPLETE` — sufficiency and
+  escalation belong to a runtime that inspects responses between attempts.
+- **The client is passed in, never held.** `execute` takes the client per call
+  and the strategy keeps no state, so `select_strategy` returns fresh,
+  interchangeable instances and the protocol stays three members wide
+  (`name`, `deterministic`, `execute`).
 
 ### 2026-09-27 — US-010, capability probe
 
